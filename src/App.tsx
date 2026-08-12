@@ -369,7 +369,7 @@ function App() {
         </aside>
       </section>
 
-      <footer><span>FitSend 0.1</span><span>Images + video · Windows</span></footer>
+      <footer><span>FitSend 0.1</span><span>Images + video · Video powered by FFmpeg</span></footer>
     </main>
   );
 }

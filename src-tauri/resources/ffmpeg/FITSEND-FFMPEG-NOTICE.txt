@@ -1,0 +1,13 @@
+FitSend video support uses the separate FFmpeg and FFprobe command-line programs.
+
+The bundled Windows preview uses the Gyan.dev FFmpeg Essentials build. The precise version, build configuration, corresponding FFmpeg source revision, and external libraries are recorded in BUILD_README.txt beside the executables. The applicable GNU GPL v3 license is included as LICENSE.GPLv3.txt.
+
+FFmpeg is a trademark of Fabrice Bellard and is an independent open-source project. FitSend is not affiliated with or endorsed by the FFmpeg project or Gyan.dev.
+
+Replacing the tools
+-------------------
+FitSend looks for ffmpeg.exe and ffprobe.exe in its bundled resources first, and then falls back to the operating-system PATH. Advanced users may override either executable with FITSEND_FFMPEG_PATH and FITSEND_FFPROBE_PATH.
+
+Distribution note
+-----------------
+Do not publish the bundled preview without also making the complete corresponding source code for the exact FFmpeg build available from the same download location and satisfying the applicable licenses for its external libraries. Review https://ffmpeg.org/legal.html before public distribution. This notice is not legal advice.

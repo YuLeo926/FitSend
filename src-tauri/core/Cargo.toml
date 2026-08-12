@@ -1,6 +1,6 @@
 [package]
 name = "fitsend-core"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local media analysis and size-constrained processing for FitSend"
 edition = "2021"
 

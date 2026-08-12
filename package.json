@@ -1,13 +1,15 @@
 {
   "name": "fitsend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "stage:ffmpeg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage-ffmpeg.ps1",
+    "bundle:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-bundled.ps1",
     "tauri": "tauri"
   },
   "dependencies": {

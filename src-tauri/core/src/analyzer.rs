@@ -1,9 +1,12 @@
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 use image::{GenericImageView, ImageReader};
 use serde_json::Value;
 
-use crate::domain::{MediaAnalysis, MediaKind};
+use crate::{
+    domain::{MediaAnalysis, MediaKind},
+    toolchain,
+};
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png"];
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mov", "mkv", "webm"];
@@ -76,7 +79,7 @@ fn analyze_video(
         );
     }
 
-    let output = Command::new("ffprobe")
+    let output = toolchain::command("ffprobe")
         .args([
             "-v",
             "error",
@@ -136,11 +139,7 @@ fn analyze_video(
 }
 
 pub fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .arg("-version")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    toolchain::available(command)
 }
 
 fn concise_process_error(stderr: &str) -> String {

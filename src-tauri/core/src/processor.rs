@@ -2,7 +2,7 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Output,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -14,7 +14,7 @@ use image::{
 
 use crate::{
     domain::{MediaKind, ProcessRequest, ProcessResult},
-    planner,
+    planner, toolchain,
 };
 
 pub fn process(request: &ProcessRequest) -> Result<ProcessResult, String> {
@@ -165,7 +165,7 @@ fn encode_video_passes(
     let audio_bitrate = format!("{audio_bitrate_kbps}k");
     let passlog_value = passlog.to_string_lossy().to_string();
 
-    let mut first = Command::new("ffmpeg");
+    let mut first = toolchain::command("ffmpeg");
     first.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]);
     first.arg(input);
     first.args([
@@ -190,7 +190,7 @@ fn encode_video_passes(
         return Err(error);
     }
 
-    let mut second = Command::new("ffmpeg");
+    let mut second = toolchain::command("ffmpeg");
     second.args(["-hide_banner", "-loglevel", "error", "-y", "-i"]);
     second.arg(input);
     second.args([
@@ -342,6 +342,7 @@ fn unique_suffix() -> u128 {
 mod tests {
     use super::*;
     use crate::{analyze, build, PlanRequest};
+    use std::process::Command;
 
     fn sample_analysis(path: &Path) -> crate::MediaAnalysis {
         analyze(path.to_string_lossy().as_ref()).expect("sample media should be analyzable")

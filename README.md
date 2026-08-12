@@ -22,7 +22,7 @@ Requirements:
 
 - Node.js 22 or later
 - Rust stable
-- FFmpeg and FFprobe on `PATH` for video support
+- FFmpeg and FFprobe on `PATH` for unpackaged development video support
 - Windows WebView2 (normally included with current Windows releases)
 
 ```powershell
@@ -30,7 +30,7 @@ npm install
 npm run tauri dev
 ```
 
-Images work without FFmpeg. If FFmpeg is unavailable, FitSend explains that video processing is unavailable instead of failing silently.
+Images work without FFmpeg. Bundled Windows releases include FFmpeg and FFprobe, so end users do not need to install them. Development builds prefer tools bundled beside the application and fall back to `PATH`; if neither is available, FitSend explains that video processing is unavailable instead of failing silently.
 
 ## Quality checks
 
@@ -53,10 +53,14 @@ These tests include real PNG-to-JPEG processing and, when FFmpeg is available, a
 ## Build a Windows installer
 
 ```powershell
-npm run tauri build
+npm run bundle:windows
 ```
 
-Tauri produces both MSI and NSIS installers under `src-tauri/target/release/bundle`. The release remains unsigned during early development, so Windows may show its standard warning for an unknown publisher.
+The build stages the locally installed FFmpeg distribution, rejects builds marked `--enable-nonfree`, includes its license and precise build metadata, then produces MSI, NSIS, and portable ZIP releases. Set `FITSEND_FFMPEG_SOURCE_DIR` to an extracted distribution root when the tools are not on `PATH`.
+
+The local preview currently uses the GPL v3 Gyan.dev Essentials build because FitSend calls its separate `ffmpeg.exe` and `ffprobe.exe` programs for H.264/AAC processing. Before publishing a download, provide the complete corresponding FFmpeg source for the exact bundled revision at the same download location and review all applicable external-library obligations. See `src-tauri/resources/ffmpeg/FITSEND-FFMPEG-NOTICE.txt`. This is a distribution checkpoint, not legal advice.
+
+The release remains unsigned during early development, so Windows may show its standard warning for an unknown publisher.
 
 ## How fitting works
 
