@@ -341,6 +341,11 @@ fn unique_suffix() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{analyze, build, PlanRequest};
+
+    fn sample_analysis(path: &Path) -> crate::MediaAnalysis {
+        analyze(path.to_string_lossy().as_ref()).expect("sample media should be analyzable")
+    }
 
     #[test]
     fn creates_a_new_name_when_output_exists() {
@@ -394,5 +399,129 @@ mod tests {
         let error = process(&request).unwrap_err();
         assert!(error.contains("changed after it was analyzed"));
         assert!(!output.exists());
+    }
+
+    #[test]
+    fn processes_a_real_png_below_the_requested_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("source.png");
+        let output = directory.path().join("source.fitsend.jpg");
+        let source = ImageBuffer::from_fn(1400, 900, |x, y| {
+            let mixed = x.wrapping_mul(31) ^ y.wrapping_mul(17) ^ (x * y);
+            image::Rgba([
+                (mixed % 251) as u8,
+                ((mixed / 7 + x) % 253) as u8,
+                ((mixed / 11 + y) % 255) as u8,
+                if (x + y) % 7 == 0 { 180 } else { 255 },
+            ])
+        });
+        DynamicImage::ImageRgba8(source)
+            .save_with_format(&input, image::ImageFormat::Png)
+            .unwrap();
+
+        let analysis = sample_analysis(&input);
+        assert!(analysis.has_alpha);
+        assert!(analysis.size_bytes > 160 * 1024);
+        let plan = build(&PlanRequest {
+            analysis: analysis.clone(),
+            target_bytes: 160 * 1024,
+        })
+        .unwrap();
+        assert!(!plan.already_fits);
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("transparency")));
+
+        let result = process(&ProcessRequest {
+            analysis,
+            target_bytes: 160 * 1024,
+            output_path: output.to_string_lossy().to_string(),
+        })
+        .unwrap();
+
+        assert!(result.verified);
+        assert!(result.output_bytes <= 160 * 1024);
+        assert!(output.exists());
+        assert_eq!(
+            image::ImageReader::open(output)
+                .unwrap()
+                .with_guessed_format()
+                .unwrap()
+                .format(),
+            Some(image::ImageFormat::Jpeg)
+        );
+    }
+
+    #[test]
+    fn processes_a_real_video_below_the_requested_limit() {
+        if !crate::analyzer::command_available("ffmpeg") {
+            eprintln!("FFmpeg is unavailable; skipping real video pipeline test.");
+            return;
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("source.mp4");
+        let output = directory.path().join("source.fitsend.mp4");
+        let generated = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=1280x720:rate=30:duration=5",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=880:sample_rate=48000:duration=5",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-b:v",
+                "5M",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-shortest",
+            ])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "sample video generation failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+
+        let analysis = sample_analysis(&input);
+        assert_eq!(analysis.kind, MediaKind::Video);
+        assert!(analysis.has_audio);
+        assert!(analysis.size_bytes > 700 * 1024);
+        let plan = build(&PlanRequest {
+            analysis: analysis.clone(),
+            target_bytes: 700 * 1024,
+        })
+        .unwrap();
+        assert!(plan.feasible);
+        assert!(!plan.already_fits);
+
+        let result = process(&ProcessRequest {
+            analysis,
+            target_bytes: 700 * 1024,
+            output_path: output.to_string_lossy().to_string(),
+        })
+        .unwrap();
+
+        assert!(result.verified);
+        assert!(result.output_bytes <= 700 * 1024);
+        assert!(result.attempts <= 3);
+        let output_analysis = sample_analysis(&output);
+        assert_eq!(output_analysis.video_codec.as_deref(), Some("h264"));
+        assert_eq!(output_analysis.audio_codec.as_deref(), Some("aac"));
     }
 }

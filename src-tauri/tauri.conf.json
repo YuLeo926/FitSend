@@ -30,6 +30,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "shortDescription": "Make files fit their destination, locally.",
     "longDescription": "FitSend creates a verified, upload-ready copy of an image or video without sending the source to a server.",
     "category": "Utility"

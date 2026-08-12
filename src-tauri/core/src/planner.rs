@@ -161,7 +161,7 @@ fn scaled_even_dimensions(width: u32, height: u32, max_width: u32) -> (u32, u32)
 }
 
 fn make_even(value: u32) -> u32 {
-    if value % 2 == 0 {
+    if value.is_multiple_of(2) {
         value
     } else {
         value.saturating_sub(1).max(2)

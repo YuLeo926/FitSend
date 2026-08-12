@@ -1,23 +1,18 @@
-mod analyzer;
-mod domain;
-mod planner;
-mod processor;
-
-use domain::{CompressionPlan, MediaAnalysis, PlanRequest, ProcessRequest, ProcessResult};
+use fitsend_core::{CompressionPlan, MediaAnalysis, PlanRequest, ProcessRequest, ProcessResult};
 
 #[tauri::command]
 fn analyze_media(path: String) -> Result<MediaAnalysis, String> {
-    analyzer::analyze(&path)
+    fitsend_core::analyze(&path)
 }
 
 #[tauri::command]
 fn build_plan(request: PlanRequest) -> Result<CompressionPlan, String> {
-    planner::build(&request)
+    fitsend_core::build(&request)
 }
 
 #[tauri::command]
 async fn process_media(request: ProcessRequest) -> Result<ProcessResult, String> {
-    tauri::async_runtime::spawn_blocking(move || processor::process(&request))
+    tauri::async_runtime::spawn_blocking(move || fitsend_core::process(&request))
         .await
         .map_err(|error| format!("The processing task stopped unexpectedly: {error}"))?
 }

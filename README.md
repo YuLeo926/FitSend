@@ -41,6 +41,23 @@ cd src-tauri
 cargo test
 ```
 
+The media engine is an independent Rust crate, so it can be verified without launching the desktop shell:
+
+```powershell
+cd src-tauri
+cargo test -p fitsend-core
+```
+
+These tests include real PNG-to-JPEG processing and, when FFmpeg is available, a generated H.264/AAC video that must be measured below its requested limit.
+
+## Build a Windows installer
+
+```powershell
+npm run tauri build
+```
+
+Tauri produces both MSI and NSIS installers under `src-tauri/target/release/bundle`. The release remains unsigned during early development, so Windows may show its standard warning for an unknown publisher.
+
 ## How fitting works
 
 Images are tested across multiple resolution and JPEG-quality candidates. The best candidate that actually fits wins. Transparent pixels are placed on white and called out before processing.
