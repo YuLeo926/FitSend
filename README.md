@@ -12,6 +12,9 @@ FitSend is a local-first desktop utility that creates the highest-quality image 
 - Optimizes images locally and exports JPEG when compression is needed.
 - Encodes videos as compatible H.264/AAC MP4 files with FFmpeg.
 - Retries video compression when the measured output misses the target.
+- Shows measured progress, elapsed time, and an estimated completion time while working.
+- Cancels active work safely and removes incomplete output files.
+- Compares original and output size, dimensions, duration, and encoding attempts.
 - Never overwrites the original file or uploads it to a server.
 
 PDF support and batch processing are intentionally deferred until the core single-file workflow is proven.
@@ -37,6 +40,7 @@ Images work without FFmpeg. Bundled Windows releases include FFmpeg and FFprobe,
 ```powershell
 npm test
 npm run build
+npm run test:acceptance
 cd src-tauri
 cargo test
 ```
@@ -48,7 +52,7 @@ cd src-tauri
 cargo test -p fitsend-core
 ```
 
-These tests include real PNG-to-JPEG processing and, when FFmpeg is available, a generated H.264/AAC video that must be measured below its requested limit.
+The acceptance command generates a 27-case image/video matrix, including Unicode and space-containing paths, already-fitting files, WebM/MKV inputs, aggressive limits, corrupt media, and infeasible targets. Every successful output is opened, measured against the requested limit, and checked for compatible video codecs. It writes the latest JSON and Markdown reports to `output/acceptance`.
 
 ## Build a Windows installer
 

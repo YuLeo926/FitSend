@@ -50,6 +50,15 @@ export type ProcessResult = {
   attempts: number;
   width: number;
   height: number;
+  durationMs: number;
+};
+
+export type ProcessProgress = {
+  jobId: string;
+  percent: number;
+  stage: string;
+  encodedSeconds: number | null;
+  attempt: number;
 };
 
 export type PlanRequest = {

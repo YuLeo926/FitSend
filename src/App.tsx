@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -8,7 +9,9 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
+  CircleStop,
   CircleAlert,
+  Clock3,
   Clipboard,
   FileImage,
   FileVideo2,
@@ -21,9 +24,9 @@ import {
   Sparkles,
   UploadCloud,
 } from "lucide-react";
-import { formatBytes, formatDuration, outputDefaultPath } from "./domain/format";
+import { formatBytes, formatDuration, formatElapsed, outputDefaultPath, savedPercent } from "./domain/format";
 import { bytesFromCustomLimit, profileById, profiles } from "./domain/profiles";
-import type { CompressionPlan, MediaAnalysis, ProcessResult } from "./domain/types";
+import type { CompressionPlan, MediaAnalysis, ProcessProgress, ProcessResult } from "./domain/types";
 import "./styles.css";
 
 type Phase = "idle" | "analyzing" | "ready" | "processing" | "success" | "error";
@@ -44,6 +47,13 @@ function App() {
   const [customUnit, setCustomUnit] = useState<"KB" | "MB">("MB");
   const [dragActive, setDragActive] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [progress, setProgress] = useState<ProcessProgress | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [jobStartedAt, setJobStartedAt] = useState<number | null>(null);
+  const [attemptStartedAt, setAttemptStartedAt] = useState<number | null>(null);
+  const [clockNow, setClockNow] = useState(Date.now());
+  const activeJobRef = useRef<string | null>(null);
+  const activeAttemptRef = useRef(1);
 
   const activeProfile = profileById(profileId);
   const targetBytes = useMemo(
@@ -107,6 +117,35 @@ function App() {
   }, [loadFile]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let removeListener: (() => void) | undefined;
+
+    listen<ProcessProgress>("fitsend://process-progress", (event) => {
+      if (event.payload.jobId !== activeJobRef.current) return;
+      if (event.payload.attempt !== activeAttemptRef.current) {
+        activeAttemptRef.current = event.payload.attempt;
+        setAttemptStartedAt(Date.now());
+      }
+      setProgress(event.payload);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else removeListener = unlisten;
+    }).catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      removeListener?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "processing") return;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [phase]);
+
+  useEffect(() => {
     if (!analysis || phase === "processing") return;
     let current = true;
     setPlan(null);
@@ -139,15 +178,47 @@ function App() {
     });
     if (!outputPath) return;
 
+    const jobId = crypto.randomUUID();
+    const startedAt = Date.now();
+    activeJobRef.current = jobId;
+    activeAttemptRef.current = 1;
+    setJobStartedAt(startedAt);
+    setAttemptStartedAt(startedAt);
+    setClockNow(startedAt);
+    setProgress({ jobId, percent: 0, stage: "Starting local processing", encodedSeconds: null, attempt: 1 });
+    setCancelling(false);
     setPhase("processing");
     setError(null);
     setResult(null);
     try {
       const nextResult = await invoke<ProcessResult>("process_media", {
+        jobId,
         request: { analysis, targetBytes, outputPath },
       });
       setResult(nextResult);
       setPhase("success");
+    } catch (reason) {
+      const message = String(reason);
+      if (message.includes("PROCESS_CANCELLED")) {
+        setPhase("ready");
+      } else {
+        setError(message);
+        setPhase("error");
+      }
+    } finally {
+      activeJobRef.current = null;
+      setCancelling(false);
+      setProgress(null);
+    }
+  };
+
+  const cancelProcessing = async () => {
+    const jobId = activeJobRef.current;
+    if (!jobId || cancelling) return;
+    setCancelling(true);
+    setProgress((current) => current ? { ...current, stage: "Stopping safely…" } : current);
+    try {
+      await invoke<boolean>("cancel_process", { jobId });
     } catch (reason) {
       setError(String(reason));
       setPhase("error");
@@ -162,6 +233,11 @@ function App() {
     setResult(null);
     setError(null);
     setCopied(false);
+    setProgress(null);
+    setCancelling(false);
+    setJobStartedAt(null);
+    setAttemptStartedAt(null);
+    activeJobRef.current = null;
   };
 
   const copyPath = async () => {
@@ -172,6 +248,11 @@ function App() {
   };
 
   const isWorking = phase === "analyzing" || phase === "processing";
+  const elapsedMs = jobStartedAt === null ? 0 : Math.max(0, clockNow - jobStartedAt);
+  const attemptElapsedMs = attemptStartedAt === null ? 0 : Math.max(0, clockNow - attemptStartedAt);
+  const etaMs = progress && progress.percent >= 3 && progress.percent < 100
+    ? Math.round(attemptElapsedMs * (100 - progress.percent) / progress.percent)
+    : null;
 
   return (
     <main className="app-shell">
@@ -271,15 +352,37 @@ function App() {
                     <p className="safe-note"><Check size={16} /> Output will be measured again before it is accepted.</p>
                   )}
 
-                  <button
-                    className="primary-button"
-                    type="button"
-                    onClick={() => void makeItFit()}
-                    disabled={!plan.feasible || isWorking || targetBytes <= 0}
-                  >
-                    {phase === "processing" ? <><LoaderCircle className="spin" size={19} /> Making it fit…</> : <><Sparkles size={18} /> Make it fit</>}
-                  </button>
-                  {phase === "processing" ? <p className="processing-note">Encoding and measuring locally. Longer videos may take a few minutes.</p> : null}
+                  {phase === "processing" && progress ? (
+                    <div className="processing-panel">
+                      <div className="progress-heading">
+                        <div>
+                          <span>{cancelling ? "Cancelling" : progress.stage}</span>
+                          <strong>{progress.percent}%</strong>
+                        </div>
+                        <div className="progress-track" role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100}>
+                          <span style={{ width: `${progress.percent}%` }} />
+                        </div>
+                      </div>
+                      <div className="progress-meta">
+                        <span><Clock3 size={14} /> {formatElapsed(elapsedMs)} elapsed</span>
+                        <span>{etaMs === null ? "Calculating time left…" : `About ${formatElapsed(etaMs)} left`}</span>
+                        {progress.attempt > 1 ? <span>Attempt {progress.attempt} of 3</span> : null}
+                      </div>
+                      <button className="cancel-button" type="button" onClick={() => void cancelProcessing()} disabled={cancelling}>
+                        {cancelling ? <LoaderCircle className="spin" size={17} /> : <CircleStop size={17} />}
+                        {cancelling ? "Cleaning up…" : "Cancel"}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => void makeItFit()}
+                      disabled={!plan.feasible || isWorking || targetBytes <= 0}
+                    >
+                      <Sparkles size={18} /> Make it fit
+                    </button>
+                  )}
                 </>
               ) : planError ? (
                 <div className="plan-error"><CircleAlert size={18} /><span>{planError}</span></div>
@@ -294,6 +397,14 @@ function App() {
                 <span className="section-label">Ready to send</span>
                 <h2>{formatBytes(result.outputBytes)} — verified under {formatBytes(result.targetBytes)}</h2>
                 <p title={result.outputPath}>{result.outputPath}</p>
+                <div className="result-comparison">
+                  <div><span>Original</span><strong>{formatBytes(analysis?.sizeBytes ?? 0)}</strong></div>
+                  <div><span>Output</span><strong>{formatBytes(result.outputBytes)}</strong></div>
+                  <div><span>Saved</span><strong>{savedPercent(analysis?.sizeBytes ?? 0, result.outputBytes)}%</strong></div>
+                  <div><span>Dimensions</span><strong>{analysis?.width} × {analysis?.height} → {result.width} × {result.height}</strong></div>
+                  <div><span>Processing</span><strong>{formatElapsed(result.durationMs)}</strong></div>
+                  <div><span>Attempts</span><strong>{result.attempts}</strong></div>
+                </div>
                 <div className="success-actions">
                   <button className="primary-button compact" type="button" onClick={() => void revealItemInDir(result.outputPath)}>
                     <FolderOpen size={17} /> Show in folder
@@ -331,6 +442,7 @@ function App() {
                 aria-checked={profileId === profile.id}
                 key={profile.id}
                 onClick={() => setProfileId(profile.id)}
+                disabled={isWorking}
               >
                 <span className={`profile-dot ${profile.accent}`} />
                 <span><strong>{profile.name}</strong><small>{profile.description}</small></span>
@@ -349,9 +461,10 @@ function App() {
                   min="0.01"
                   step="0.1"
                   value={customValue}
+                  disabled={isWorking}
                   onChange={(event) => setCustomValue(Number(event.target.value))}
                 />
-                <select value={customUnit} onChange={(event) => setCustomUnit(event.target.value as "KB" | "MB")}>
+                <select disabled={isWorking} value={customUnit} onChange={(event) => setCustomUnit(event.target.value as "KB" | "MB")}>
                   <option>MB</option><option>KB</option>
                 </select>
               </div>
@@ -369,7 +482,7 @@ function App() {
         </aside>
       </section>
 
-      <footer><span>FitSend 0.1</span><span>Images + video · Video powered by FFmpeg</span></footer>
+      <footer><span>FitSend 0.1.2</span><span>Images + video · Video powered by FFmpeg</span></footer>
     </main>
   );
 }

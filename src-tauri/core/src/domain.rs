@@ -68,4 +68,5 @@ pub struct ProcessResult {
     pub attempts: u8,
     pub width: u32,
     pub height: u32,
+    pub duration_ms: u64,
 }

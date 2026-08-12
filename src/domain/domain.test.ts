@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatDuration, outputDefaultPath } from "./format";
+import { formatBytes, formatDuration, formatElapsed, outputDefaultPath, savedPercent } from "./format";
 import { bytesFromCustomLimit, profileById } from "./profiles";
 
 describe("FitSend domain helpers", () => {
@@ -28,5 +28,12 @@ describe("FitSend domain helpers", () => {
 
   it("falls back to the default profile", () => {
     expect(profileById("missing").id).toBe("discord");
+  });
+
+  it("formats processing results", () => {
+    expect(formatElapsed(420)).toBe("Under 1s");
+    expect(formatElapsed(65_000)).toBe("1m 5s");
+    expect(savedPercent(10_000, 2_500)).toBe(75);
+    expect(savedPercent(100, 120)).toBe(0);
   });
 });

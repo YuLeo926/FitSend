@@ -25,3 +25,17 @@ export function outputDefaultPath(inputPath: string, extension: string): string 
   const stem = dot > 0 ? filename.slice(0, dot) : filename;
   return `${directory}${stem}.fitsend.${extension}`;
 }
+
+export function formatElapsed(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "—";
+  if (milliseconds < 1000) return "Under 1s";
+  const seconds = Math.round(milliseconds / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+export function savedPercent(originalBytes: number, outputBytes: number): number {
+  if (originalBytes <= 0 || outputBytes >= originalBytes) return 0;
+  return Math.round((1 - outputBytes / originalBytes) * 100);
+}
