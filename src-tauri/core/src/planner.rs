@@ -56,9 +56,7 @@ fn image_plan(
     };
     let mut warnings = Vec::new();
     if analysis.has_alpha {
-        warnings.push(
-            "This image contains transparency. The JPEG output will place it on white.".to_string(),
-        );
+        warnings.push("This image contains transparency, which will be preserved in a PNG output.".to_string());
     }
     if ratio < 0.1 {
         warnings.push(
@@ -75,12 +73,21 @@ fn image_plan(
         feasible: target_bytes >= 12 * 1024,
         target_bytes,
         estimated_bytes: target_bytes.saturating_mul(98) / 100,
-        operation: "Optimize image".to_string(),
-        summary: "FitSend will balance JPEG quality and dimensions, then verify the actual result."
-            .to_string(),
+        operation: match strategy {
+            CompressionStrategy::Precise => "Find the highest quality under the limit",
+            CompressionStrategy::Balanced => "Reduce size with almost no visible change",
+            CompressionStrategy::Smallest => "Find the smallest acceptable image",
+        }
+        .to_string(),
+        summary: match strategy {
+            CompressionStrategy::Precise => "FitSend will search from maximum quality and resize only when necessary.",
+            CompressionStrategy::Balanced => "FitSend will keep the original when no worthwhile high-quality saving is available.",
+            CompressionStrategy::Smallest => "FitSend will compare safe candidates and choose the smallest one above its quality floor.",
+        }
+        .to_string(),
         quality_label: quality_label.to_string(),
         warnings,
-        output_extension: "jpg".to_string(),
+        output_extension: if analysis.has_alpha { "png" } else { "jpg" }.to_string(),
         video_bitrate_kbps: None,
         audio_bitrate_kbps: None,
         width: analysis.width,

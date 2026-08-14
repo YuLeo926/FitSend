@@ -1,5 +1,6 @@
 mod analyzer;
 mod domain;
+mod image_processor;
 mod output;
 mod planner;
 mod processor;

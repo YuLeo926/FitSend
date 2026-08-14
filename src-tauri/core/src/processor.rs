@@ -1,20 +1,17 @@
 use std::{
     fs,
-    io::{BufRead, BufReader, Cursor, Read},
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use image::{
-    codecs::jpeg::JpegEncoder,
-    imageops::{resize, FilterType},
-    DynamicImage, GenericImageView, ImageBuffer, ImageReader, Rgb, RgbImage,
-};
+use image::ImageReader;
 
 use crate::{
-    domain::{MediaKind, ProcessRequest, ProcessResult},
+    domain::{MediaKind, ProcessOutcome, ProcessRequest, ProcessResult},
+    image_processor::{choose_image_candidate, ImageDecision},
     output::OutputTransaction,
     planner,
     progress::{report, ProcessProgress},
@@ -82,6 +79,10 @@ where
     };
 
     let mut completed = result?;
+    if completed.outcome == ProcessOutcome::NoChange {
+        completed.duration_ms = elapsed_millis(started_at);
+        return Ok(completed);
+    }
     let published_path = transaction.publish()?;
     completed.output_path = published_path.to_string_lossy().to_string();
     completed.duration_ms = elapsed_millis(started_at);
@@ -100,11 +101,35 @@ fn process_image(
         .map_err(|error| format!("FitSend could not identify this image: {error}"))?
         .decode()
         .map_err(|error| format!("FitSend could not decode this image: {error}"))?;
-    let rgb = flatten_to_white(&decoded);
     report(callback, 14, "Preparing image pixels", None, 1)?;
-    let (bytes, width, height) = best_jpeg_candidate(&rgb, request.target_bytes, callback)?;
+    let decision = choose_image_candidate(
+        &decoded,
+        request.analysis.size_bytes,
+        request.target_bytes,
+        request.strategy,
+        callback,
+    )?;
+    let candidate = match decision {
+        ImageDecision::Created(candidate) => candidate,
+        ImageDecision::NoChange(reason) => {
+            report(callback, 100, "Original is already the best choice", None, 1)?;
+            return Ok(ProcessResult {
+                output_path: request.analysis.path.clone(),
+                output_bytes: request.analysis.size_bytes,
+                target_bytes: request.target_bytes,
+                verified: request.analysis.size_bytes <= request.target_bytes,
+                attempts: 0,
+                width: request.analysis.width,
+                height: request.analysis.height,
+                duration_ms: 0,
+                outcome: ProcessOutcome::NoChange,
+                reason,
+                quality_score: Some(1.0),
+            });
+        }
+    };
     report(callback, 92, "Writing image output", None, 1)?;
-    fs::write(output_path, &bytes)
+    fs::write(output_path, &candidate.bytes)
         .map_err(|error| format!("FitSend could not write the image output: {error}"))?;
     let output_bytes = fs::metadata(output_path)
         .map_err(|error| format!("FitSend could not verify the image output: {error}"))?
@@ -115,6 +140,15 @@ fn process_image(
             request.target_bytes
         ));
     }
+    let verified = ImageReader::open(output_path)
+        .map_err(|error| format!("FitSend could not reopen the image output: {error}"))?
+        .with_guessed_format()
+        .map_err(|error| format!("FitSend could not identify the image output: {error}"))?
+        .decode()
+        .map_err(|error| format!("FitSend could not decode the image output: {error}"))?;
+    if request.analysis.has_alpha && !verified.color().has_alpha() {
+        return Err("FitSend rejected an output that lost image transparency.".to_string());
+    }
     report(callback, 100, "Verified and ready", None, 1)?;
 
     Ok(ProcessResult {
@@ -123,12 +157,20 @@ fn process_image(
         target_bytes: request.target_bytes,
         verified: true,
         attempts: 1,
-        width,
-        height,
+        width: candidate.width,
+        height: candidate.height,
         duration_ms: 0,
-        outcome: crate::domain::ProcessOutcome::Created,
-        reason: "Created and verified under the selected limit.".to_string(),
-        quality_score: None,
+        outcome: ProcessOutcome::Created,
+        reason: format!(
+            "Created a verified {}{} at {:.3} visual similarity.",
+            candidate.extension.to_uppercase(),
+            candidate
+                .encoded_quality
+                .map(|quality| format!(" quality {quality}"))
+                .unwrap_or_default(),
+            candidate.quality_score
+        ),
+        quality_score: Some(candidate.quality_score),
     })
 }
 
@@ -367,77 +409,6 @@ fn run_ffmpeg_with_progress(
     Err(format!("FFmpeg failed during {stage}: {detail}"))
 }
 
-fn flatten_to_white(image: &DynamicImage) -> RgbImage {
-    let rgba = image.to_rgba8();
-    let (width, height) = image.dimensions();
-    ImageBuffer::from_fn(width, height, |x, y| {
-        let pixel = rgba.get_pixel(x, y);
-        let alpha = pixel[3] as u16;
-        let blend = |channel: u8| -> u8 {
-            (((channel as u16 * alpha) + (255 * (255 - alpha))) / 255) as u8
-        };
-        Rgb([blend(pixel[0]), blend(pixel[1]), blend(pixel[2])])
-    })
-}
-
-fn best_jpeg_candidate(
-    source: &RgbImage,
-    target_bytes: u64,
-    callback: &mut dyn FnMut(ProcessProgress) -> bool,
-) -> Result<(Vec<u8>, u32, u32), String> {
-    let scales = [1.0_f32, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.22];
-    let qualities = [92_u8, 86, 80, 74, 68, 60, 52, 44, 36, 28];
-    let mut best: Option<(f32, Vec<u8>, u32, u32)> = None;
-
-    let total_candidates = (scales.len() * qualities.len()) as f64;
-    let mut candidate_index = 0_usize;
-
-    for scale in scales {
-        let width = ((source.width() as f32 * scale).round() as u32).max(1);
-        let height = ((source.height() as f32 * scale).round() as u32).max(1);
-        if source.width().min(source.height()) >= 96 && width.min(height) < 96 {
-            continue;
-        }
-        let candidate = if width == source.width() && height == source.height() {
-            source.clone()
-        } else {
-            resize(source, width, height, FilterType::Lanczos3)
-        };
-
-        for quality in qualities {
-            candidate_index += 1;
-            let percent = 16 + ((candidate_index as f64 / total_candidates) * 72.0).round() as u8;
-            report(callback, percent, "Finding the best image quality", None, 1)?;
-            let mut cursor = Cursor::new(Vec::new());
-            let mut encoder = JpegEncoder::new_with_quality(&mut cursor, quality);
-            encoder
-                .encode_image(&DynamicImage::ImageRgb8(candidate.clone()))
-                .map_err(|error| format!("FitSend could not encode a JPEG candidate: {error}"))?;
-            let bytes = cursor.into_inner();
-            if bytes.len() as u64 > target_bytes {
-                continue;
-            }
-
-            let pixel_ratio = (width as f32 * height as f32)
-                / (source.width() as f32 * source.height() as f32).max(1.0);
-            let score = pixel_ratio.sqrt() * 0.55 + (quality as f32 / 100.0) * 0.45;
-            if best
-                .as_ref()
-                .map(|current| score > current.0)
-                .unwrap_or(true)
-            {
-                best = Some((score, bytes, width, height));
-            }
-        }
-    }
-
-    best.map(|(_, bytes, width, height)| (bytes, width, height))
-        .ok_or_else(|| {
-            "The image cannot reach this target without becoming unusably small. Raise the limit."
-                .to_string()
-        })
-}
-
 fn temporary_passlog() -> PathBuf {
     std::env::temp_dir().join(format!(
         "fitsend-pass-{}-{}",
@@ -468,6 +439,7 @@ fn elapsed_millis(started_at: Instant) -> u64 {
 mod tests {
     use super::*;
     use crate::{analyze, build, PlanRequest};
+    use image::{DynamicImage, ImageBuffer};
 
     fn sample_analysis(path: &Path) -> crate::MediaAnalysis {
         analyze(path.to_string_lossy().as_ref()).expect("sample media should be analyzable")
@@ -484,17 +456,6 @@ mod tests {
                 .and_then(|value| value.to_str()),
             Some("clip.fitsend-2.mp4")
         );
-    }
-
-    #[test]
-    fn image_candidate_is_below_the_target() {
-        let source = ImageBuffer::from_fn(1200, 800, |x, y| {
-            Rgb([(x % 255) as u8, (y % 255) as u8, ((x + y) % 255) as u8])
-        });
-        let (bytes, width, height) =
-            best_jpeg_candidate(&source, 90 * 1024, &mut |_| true).unwrap();
-        assert!(bytes.len() <= 90 * 1024);
-        assert!(width > 0 && height > 0);
     }
 
     #[test]
@@ -535,7 +496,7 @@ mod tests {
     fn processes_a_real_png_below_the_requested_limit() {
         let directory = tempfile::tempdir().unwrap();
         let input = directory.path().join("source.png");
-        let output = directory.path().join("source.fitsend.jpg");
+        let output = directory.path().join("source.fitsend.png");
         let source = ImageBuffer::from_fn(1400, 900, |x, y| {
             let mixed = x.wrapping_mul(31) ^ y.wrapping_mul(17) ^ (x * y);
             image::Rgba([
@@ -551,10 +512,10 @@ mod tests {
 
         let analysis = sample_analysis(&input);
         assert!(analysis.has_alpha);
-        assert!(analysis.size_bytes > 160 * 1024);
+        assert!(analysis.size_bytes > 2 * 1024 * 1024);
         let plan = build(&PlanRequest {
             analysis: analysis.clone(),
-            target_bytes: 160 * 1024,
+            target_bytes: 2 * 1024 * 1024,
             strategy: crate::CompressionStrategy::Precise,
         })
         .unwrap();
@@ -566,23 +527,24 @@ mod tests {
 
         let result = process(&ProcessRequest {
             analysis,
-            target_bytes: 160 * 1024,
+            target_bytes: 2 * 1024 * 1024,
             output_path: output.to_string_lossy().to_string(),
             strategy: crate::CompressionStrategy::Precise,
         })
         .unwrap();
 
         assert!(result.verified);
-        assert!(result.output_bytes <= 160 * 1024);
+        assert!(result.output_bytes <= 2 * 1024 * 1024);
         assert!(output.exists());
         assert_eq!(
-            image::ImageReader::open(output)
+            image::ImageReader::open(&output)
                 .unwrap()
                 .with_guessed_format()
                 .unwrap()
                 .format(),
-            Some(image::ImageFormat::Jpeg)
+            Some(image::ImageFormat::Png)
         );
+        assert!(image::open(&output).unwrap().color().has_alpha());
     }
 
     #[test]
@@ -591,14 +553,13 @@ mod tests {
         let input = directory.path().join("progress-source.png");
         let output = directory.path().join("progress-output.jpg");
         let source = ImageBuffer::from_fn(900, 600, |x, y| {
-            image::Rgba([
+            image::Rgb([
                 (x.wrapping_mul(19) % 255) as u8,
                 (y.wrapping_mul(23) % 255) as u8,
                 ((x ^ y) % 255) as u8,
-                255,
             ])
         });
-        DynamicImage::ImageRgba8(source)
+        DynamicImage::ImageRgb8(source)
             .save_with_format(&input, image::ImageFormat::Png)
             .unwrap();
         let analysis = sample_analysis(&input);
@@ -606,7 +567,7 @@ mod tests {
         let result = process_with_progress(
             &ProcessRequest {
                 analysis,
-                target_bytes: 70 * 1024,
+                target_bytes: 200 * 1024,
                 output_path: output.to_string_lossy().to_string(),
                 strategy: crate::CompressionStrategy::Precise,
             },
@@ -618,7 +579,7 @@ mod tests {
         .unwrap();
 
         assert!(result.verified);
-        assert!(percentages.len() > 10);
+        assert!(percentages.len() > 5);
         assert!(percentages.windows(2).all(|pair| pair[0] <= pair[1]));
         assert_eq!(percentages.last(), Some(&100));
     }
