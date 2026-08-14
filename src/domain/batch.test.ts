@@ -65,7 +65,7 @@ describe("batch calculations", () => {
       failed: 1,
       originalBytes: 2_300,
       sendableBytes: 1_100,
-      savedBytes: 1_200,
+      savedBytes: 400,
     });
   });
 

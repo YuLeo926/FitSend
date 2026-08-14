@@ -43,6 +43,10 @@ export function batchTotals(items: BatchItem[]): BatchTotals {
     if (item.status !== "completed" && item.status !== "noChange") return sum;
     return sum + (item.result?.outputBytes ?? item.analysis?.sizeBytes ?? 0);
   }, 0);
+  const successfulOriginalBytes = items.reduce((sum, item) => {
+    if (item.status !== "completed" && item.status !== "noChange") return sum;
+    return sum + (item.analysis?.sizeBytes ?? 0);
+  }, 0);
   return {
     files: items.length,
     completed: items.filter((item) => item.status === "completed").length,
@@ -51,7 +55,7 @@ export function batchTotals(items: BatchItem[]): BatchTotals {
     cancelled: items.filter((item) => item.status === "cancelled").length,
     originalBytes,
     sendableBytes,
-    savedBytes: Math.max(0, originalBytes - sendableBytes),
+    savedBytes: Math.max(0, successfulOriginalBytes - sendableBytes),
   };
 }
 
