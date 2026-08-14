@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { batchTotals, overallProgress, pathKey, type BatchItem } from "../domain/batch";
+import { allItemsTerminal, batchTotals, cancelWaitingItems, overallProgress, pathKey, type BatchItem } from "../domain/batch";
 import { outputDefaultPath } from "../domain/format";
 import type { CompressionPlan, CompressionStrategy, MediaAnalysis, ProcessProgress, ProcessResult } from "../domain/types";
 
@@ -140,7 +140,7 @@ export function useBatchQueue({ targetBytes, strategy }: UseBatchQueueOptions) {
       }
     }
     if (cancelRequested.current) {
-      setItems((current) => current.map((item) => item.status === "waiting" ? { ...item, status: "cancelled" } : item));
+      setItems(cancelWaitingItems);
     }
     setRunning(false);
   }, [patchItem, running, strategy, targetBytes]);
@@ -160,7 +160,7 @@ export function useBatchQueue({ targetBytes, strategy }: UseBatchQueueOptions) {
   const totals = useMemo(() => batchTotals(items), [items]);
   const progress = useMemo(() => overallProgress(items), [items]);
   const hasRunnable = items.some((item) => item.status === "waiting");
-  const allTerminal = items.length > 0 && items.every((item) => ["completed", "noChange", "failed", "cancelled"].includes(item.status));
+  const allTerminal = allItemsTerminal(items);
 
   return {
     items,

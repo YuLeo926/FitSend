@@ -239,7 +239,7 @@ function App() {
         </aside>
       </section>
 
-      <footer><span>FitSend 0.1.3</span><span>Images + video · Video powered by bundled FFmpeg</span></footer>
+      <footer><span>FitSend 0.2.0</span><span>Images + video · Video powered by bundled FFmpeg</span></footer>
     </main>
   );
 }

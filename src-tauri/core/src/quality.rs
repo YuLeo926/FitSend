@@ -109,7 +109,8 @@ mod tests {
     #[test]
     fn visibly_different_images_score_lower() {
         let reference = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(32, 32, Rgb([0, 0, 0])));
-        let candidate = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(32, 32, Rgb([255, 255, 255])));
+        let candidate =
+            DynamicImage::ImageRgb8(ImageBuffer::from_pixel(32, 32, Rgb([255, 255, 255])));
         assert!(image_ssim(&reference, &candidate).unwrap() < 0.1);
     }
 

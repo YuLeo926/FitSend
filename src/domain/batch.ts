@@ -37,6 +37,14 @@ export function isTerminal(status: BatchStatus): boolean {
   return terminalStatuses.has(status);
 }
 
+export function cancelWaitingItems(items: BatchItem[]): BatchItem[] {
+  return items.map((item) => item.status === "waiting" ? { ...item, status: "cancelled" } : item);
+}
+
+export function allItemsTerminal(items: BatchItem[]): boolean {
+  return items.length > 0 && items.every((item) => isTerminal(item.status));
+}
+
 export function batchTotals(items: BatchItem[]): BatchTotals {
   const originalBytes = items.reduce((sum, item) => sum + (item.analysis?.sizeBytes ?? 0), 0);
   const sendableBytes = items.reduce((sum, item) => {

@@ -2,22 +2,28 @@
 
 **Make your file accepted anywhere.**
 
-FitSend is a local-first desktop utility that creates the highest-quality image or video it can under a destination's file-size limit. It measures the final file before calling the job complete.
+FitSend is a local-first desktop utility that makes batches of images and videos fit a destination's per-file size limit. It measures and quality-checks every result before calling the batch complete.
 
-## What the first release does
+## Choose the limit and the strategy
 
-- Accepts JPG, PNG, MP4, MOV, MKV, and WebM files.
-- Includes safe presets for Discord, email attachments, and web uploads.
-- Supports an exact custom KB or MB limit.
-- Optimizes images locally and exports JPEG when compression is needed.
-- Encodes videos as compatible H.264/AAC MP4 files with FFmpeg.
-- Retries video compression when the measured output misses the target.
-- Shows measured progress, elapsed time, and an estimated completion time while working.
-- Cancels active work safely and removes incomplete output files.
-- Compares original and output size, dimensions, duration, and encoding attempts.
-- Never overwrites the original file or uploads it to a server.
+FitSend uses two independent choices:
 
-PDF support and batch processing are intentionally deferred until the core single-file workflow is proven.
+- **Destination:** Discord, email attachment, web upload, or an exact custom KB/MB ceiling. The limit applies to each file.
+- **Strategy:** **Precise fit** keeps the highest possible quality under the limit; **Balanced** only accepts a worthwhile saving with almost no visible change; **Smallest acceptable** searches for the smallest result above a conservative visual-quality floor.
+
+You can select or drop several JPG, PNG, MP4, MOV, MKV, and WebM files together. Mixed image/video batches run one file at a time to keep memory and CPU use predictable. A damaged or unsupported file is reported on its own row and does not stop later files.
+
+Each row shows its state, measured result, saving, and reason. The final summary reports the original total, sendable total, bytes saved, created results, unchanged originals, and failures.
+
+## Output and privacy behavior
+
+- Originals are never overwritten and nothing is uploaded.
+- New results are saved beside their source with an automatic `.fitsend` name. Existing names get a numbered suffix instead of being replaced.
+- Precise fit creates no duplicate when the source already fits.
+- Balanced can keep the source when recompression would save too little or miss its quality floor.
+- Transparent PNG input remains transparent PNG.
+- Video output is compatible H.264/AAC MP4 and is checked for size, duration, dimensions, audio presence, and visual similarity.
+- Cancellation removes incomplete outputs, FFmpeg pass logs, and quality-check residue.
 
 ## Run it locally
 
@@ -54,7 +60,7 @@ cd src-tauri
 cargo test -p fitsend-core
 ```
 
-The acceptance command generates a 27-case image/video matrix, including Unicode and space-containing paths, already-fitting files, WebM/MKV inputs, aggressive limits, corrupt media, and infeasible targets. Every successful output is opened, measured against the requested limit, and checked for compatible video codecs. It writes the latest JSON and Markdown reports to `output/acceptance`.
+The acceptance command generates a strategy/media matrix covering below-limit, slightly-over, far-over, and infeasible targets for all three strategies. It also covers the 1254×1254 regression, transparency, rotated video metadata, audio/no-audio, WebM/MKV inputs, Unicode and spaced paths, corruption, cancellation, output-name collisions, and output-write failure cleanup. Reports include strategy, outcome, quality score, dimensions, sizes, target, and processing time in `output/acceptance`.
 
 ## Build a Windows installer
 
@@ -70,8 +76,8 @@ The release remains unsigned during early development, so Windows may show its s
 
 ## How fitting works
 
-Images are tested across multiple resolution and JPEG-quality candidates. The best candidate that actually fits wins. Transparent pixels are placed on white and called out before processing.
+Images are tested across multiple quality and, when appropriate, resolution candidates. Precise searches from quality 100 downward; Balanced favors full resolution and enforces a stricter similarity floor; Smallest searches more aggressively while staying above its visual floor. Transparent pixels are preserved instead of flattened.
 
-Videos use a duration-aware bitrate budget with a safety margin. FitSend performs two-pass encoding, measures the output, and can correct the bitrate up to three times. Targets that would require unusably low video data are rejected early.
+Videos use a duration-aware bitrate budget with a safety margin. FitSend performs two-pass encoding, measures the output, and can correct the bitrate. Balanced and Smallest also compare the encoded frames against the source before accepting them. Targets that would require unusably low video data are rejected early.
 
 The source file is always left untouched. If an output name already exists, FitSend creates a numbered copy.

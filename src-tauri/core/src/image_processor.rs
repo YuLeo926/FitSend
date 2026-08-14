@@ -61,11 +61,18 @@ fn choose_jpeg_candidate(
         CompressionStrategy::Balanced => {
             let mut best: Option<ImageCandidate> = None;
             for (index, quality) in BALANCED_QUALITIES.into_iter().enumerate() {
-                report_candidate(callback, index, BALANCED_QUALITIES.len(), "Checking balanced quality")?;
+                report_candidate(
+                    callback,
+                    index,
+                    BALANCED_QUALITIES.len(),
+                    "Checking balanced quality",
+                )?;
                 let candidate = jpeg_candidate(source, source, quality)?;
                 if candidate.bytes.len() as u64 <= target_bytes
                     && candidate.quality_score >= BALANCED_IMAGE_SSIM
-                    && best.as_ref().is_none_or(|current| candidate.bytes.len() < current.bytes.len())
+                    && best
+                        .as_ref()
+                        .is_none_or(|current| candidate.bytes.len() < current.bytes.len())
                 {
                     best = Some(candidate);
                 }
@@ -83,12 +90,19 @@ fn choose_jpeg_candidate(
                     continue;
                 }
                 for quality in SMALLEST_QUALITIES {
-                    report_candidate(callback, index, total, "Finding the smallest good-looking image")?;
+                    report_candidate(
+                        callback,
+                        index,
+                        total,
+                        "Finding the smallest good-looking image",
+                    )?;
                     index += 1;
                     let candidate = jpeg_candidate(source, &resized, quality)?;
                     if candidate.quality_score >= SMALLEST_IMAGE_SSIM
                         && candidate.bytes.len() as u64 <= target_bytes
-                        && best.as_ref().is_none_or(|current| candidate.bytes.len() < current.bytes.len())
+                        && best
+                            .as_ref()
+                            .is_none_or(|current| candidate.bytes.len() < current.bytes.len())
                     {
                         best = Some(candidate);
                     }
@@ -110,7 +124,12 @@ fn precise_jpeg(
         if resized.width().max(resized.height()) < min_long_edge {
             continue;
         }
-        report_candidate(callback, scale_index, SCALE_TIERS.len(), "Finding the highest image quality")?;
+        report_candidate(
+            callback,
+            scale_index,
+            SCALE_TIERS.len(),
+            "Finding the highest image quality",
+        )?;
         let highest = jpeg_candidate(source, &resized, 100)?;
         if highest.bytes.len() as u64 <= target_bytes {
             return Ok(ImageDecision::Created(highest));
@@ -157,7 +176,12 @@ fn choose_png_candidate(
         if resized.width().max(resized.height()) < min_long_edge {
             continue;
         }
-        report_candidate(callback, index, SCALE_TIERS.len(), "Optimizing transparent image")?;
+        report_candidate(
+            callback,
+            index,
+            SCALE_TIERS.len(),
+            "Optimizing transparent image",
+        )?;
         let candidate = png_candidate(source, &resized)?;
         let quality_floor = match strategy {
             CompressionStrategy::Precise => 0.0,
@@ -180,7 +204,11 @@ fn choose_png_candidate(
             }
         }
     }
-    let minimum_savings = if strategy == CompressionStrategy::Balanced { 10 } else { 1 };
+    let minimum_savings = if strategy == CompressionStrategy::Balanced {
+        10
+    } else {
+        1
+    };
     accept_optional_optimization(best, source_bytes, target_bytes, minimum_savings)
 }
 
@@ -196,7 +224,10 @@ fn accept_optional_optimization(
                 "No worthwhile reduction passed the selected quality check.".to_string(),
             ));
         }
-        return Err("FitSend cannot meet this limit without crossing the selected quality floor.".to_string());
+        return Err(
+            "FitSend cannot meet this limit without crossing the selected quality floor."
+                .to_string(),
+        );
     };
     let required_bytes = source_bytes.saturating_mul(100 - minimum_savings_percent) / 100;
     if source_bytes <= target_bytes && candidate.bytes.len() as u64 > required_bytes {
@@ -224,12 +255,22 @@ fn jpeg_candidate(
     candidate_from_bytes(reference, cursor.into_inner(), "jpg", Some(quality))
 }
 
-fn png_candidate(reference: &DynamicImage, candidate: &DynamicImage) -> Result<ImageCandidate, String> {
+fn png_candidate(
+    reference: &DynamicImage,
+    candidate: &DynamicImage,
+) -> Result<ImageCandidate, String> {
     let rgba = candidate.to_rgba8();
     let mut bytes = Vec::new();
     PngEncoder::new(&mut bytes)
-        .write_image(&rgba, rgba.width(), rgba.height(), image::ExtendedColorType::Rgba8)
-        .map_err(|error| format!("FitSend could not encode a transparent PNG candidate: {error}"))?;
+        .write_image(
+            &rgba,
+            rgba.width(),
+            rgba.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|error| {
+            format!("FitSend could not encode a transparent PNG candidate: {error}")
+        })?;
     candidate_from_bytes(reference, bytes, "png", None)
 }
 
@@ -268,7 +309,13 @@ fn report_candidate(
     stage: &str,
 ) -> Result<(), String> {
     let fraction = index as f64 / total.max(1) as f64;
-    report(callback, 15 + (fraction * 72.0).round() as u8, stage, None, 1)
+    report(
+        callback,
+        15 + (fraction * 72.0).round() as u8,
+        stage,
+        None,
+        1,
+    )
 }
 
 #[cfg(test)]
@@ -337,6 +384,9 @@ mod tests {
             panic!("expected output")
         };
         assert_eq!(candidate.extension, "png");
-        assert!(image::load_from_memory(&candidate.bytes).unwrap().color().has_alpha());
+        assert!(image::load_from_memory(&candidate.bytes)
+            .unwrap()
+            .color()
+            .has_alpha());
     }
 }

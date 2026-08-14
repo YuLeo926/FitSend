@@ -63,7 +63,11 @@ pub fn analyze(path_value: &str) -> Result<MediaAnalysis, String> {
 
     Err(format!(
         "Unsupported file type. FitSend accepts JPG, PNG, MP4, MOV, MKV, and WebM. Received: .{}",
-        if extension.is_empty() { "unknown" } else { &extension }
+        if extension.is_empty() {
+            "unknown"
+        } else {
+            &extension
+        }
     ))
 }
 
@@ -134,6 +138,11 @@ fn analyze_video(
         })
         .map(normalize_rotation)
         .unwrap_or(0);
+    let (width, height) = display_dimensions(
+        video["width"].as_u64().unwrap_or(0) as u32,
+        video["height"].as_u64().unwrap_or(0) as u32,
+        rotation_degrees,
+    );
 
     Ok(MediaAnalysis {
         path: path_value.to_string(),
@@ -141,8 +150,8 @@ fn analyze_video(
         extension,
         kind: MediaKind::Video,
         size_bytes,
-        width: video["width"].as_u64().unwrap_or(0) as u32,
-        height: video["height"].as_u64().unwrap_or(0) as u32,
+        width,
+        height,
         duration_seconds,
         frame_rate,
         rotation_degrees,
@@ -170,6 +179,14 @@ fn normalize_rotation(value: i64) -> i32 {
         135..=224 => 180,
         225..=314 => 270,
         _ => 0,
+    }
+}
+
+fn display_dimensions(width: u32, height: u32, rotation_degrees: i32) -> (u32, u32) {
+    if matches!(rotation_degrees, 90 | 270) {
+        (height, width)
+    } else {
+        (width, height)
     }
 }
 
@@ -216,5 +233,7 @@ mod tests {
         assert_eq!(parse_fraction("0/0"), None);
         assert_eq!(normalize_rotation(-90), 270);
         assert_eq!(normalize_rotation(89), 90);
+        assert_eq!(display_dimensions(1920, 1080, 90), (1080, 1920));
+        assert_eq!(display_dimensions(1920, 1080, 180), (1920, 1080));
     }
 }

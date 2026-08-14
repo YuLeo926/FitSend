@@ -155,25 +155,45 @@ mod tests {
 
     #[test]
     fn balanced_keeps_original_dimensions() {
-        let plans = candidate_plans(&analysis(1920, 1080), 8 * 1024 * 1024, CompressionStrategy::Balanced).unwrap();
-        assert!(plans.iter().all(|plan| (plan.width, plan.height) == (1920, 1080)));
+        let plans = candidate_plans(
+            &analysis(1920, 1080),
+            8 * 1024 * 1024,
+            CompressionStrategy::Balanced,
+        )
+        .unwrap();
+        assert!(plans
+            .iter()
+            .all(|plan| (plan.width, plan.height) == (1920, 1080)));
     }
 
     #[test]
     fn smallest_caps_hd_media_at_720p_long_edge() {
-        let plans = candidate_plans(&analysis(3840, 2160), 8 * 1024 * 1024, CompressionStrategy::Smallest).unwrap();
-        assert!(plans.iter().all(|plan| (plan.width, plan.height) == (1280, 720)));
+        let plans = candidate_plans(
+            &analysis(3840, 2160),
+            8 * 1024 * 1024,
+            CompressionStrategy::Smallest,
+        )
+        .unwrap();
+        assert!(plans
+            .iter()
+            .all(|plan| (plan.width, plan.height) == (1280, 720)));
     }
 
     #[test]
     fn applies_documented_similarity_floors() {
         assert!(similarity_passes(
             CompressionStrategy::Balanced,
-            VideoSimilarity { mean: 0.99, minimum: 0.98 }
+            VideoSimilarity {
+                mean: 0.99,
+                minimum: 0.98
+            }
         ));
         assert!(!similarity_passes(
             CompressionStrategy::Smallest,
-            VideoSimilarity { mean: 0.94, minimum: 0.93 }
+            VideoSimilarity {
+                mean: 0.94,
+                minimum: 0.93
+            }
         ));
     }
 }

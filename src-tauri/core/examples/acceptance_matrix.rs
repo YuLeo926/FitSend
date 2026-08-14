@@ -7,7 +7,7 @@ use std::{
 
 use fitsend_core::{
     analyze, build, process, process_with_progress, CompressionStrategy, MediaKind, PlanRequest,
-    ProcessRequest, PROCESS_CANCELLED,
+    ProcessOutcome, ProcessRequest, PROCESS_CANCELLED,
 };
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 use serde::Serialize;
@@ -17,6 +17,8 @@ use serde::Serialize;
 struct CaseResult {
     name: String,
     category: String,
+    strategy: Option<CompressionStrategy>,
+    outcome: Option<ProcessOutcome>,
     passed: bool,
     expected: String,
     detail: String,
@@ -24,6 +26,9 @@ struct CaseResult {
     output_bytes: Option<u64>,
     target_bytes: Option<u64>,
     duration_ms: Option<u64>,
+    quality_score: Option<f64>,
+    width: Option<u32>,
+    height: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -54,6 +59,7 @@ fn main() {
     let mut cases = Vec::new();
     run_image_cases(&fixtures, &outputs, &mut cases);
     run_video_cases(&fixtures, &outputs, &mut cases);
+    run_strategy_matrix(&fixtures, &outputs, &mut cases);
     run_failure_cases(&fixtures, &outputs, &mut cases);
 
     let passed = cases.iter().filter(|case| case.passed).count();
@@ -97,10 +103,10 @@ fn run_image_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
             720,
             1280,
             true,
-            110,
+            1000,
         ),
-        ("image-square-png", "square.png", 1000, 1000, false, 100),
-        ("image-unicode-path", "旅行 照片.png", 1280, 720, true, 105),
+        ("image-square-png", "square.png", 1000, 1000, false, 160),
+        ("image-unicode-path", "旅行 照片.png", 1280, 720, true, 1000),
         (
             "image-spaces-path",
             "team screenshot wide.jpg",
@@ -117,9 +123,9 @@ fn run_image_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
             800,
             600,
             false,
-            45,
+            160,
         ),
-        ("image-alpha-dark", "alpha dark.png", 1100, 700, true, 75),
+        ("image-alpha-dark", "alpha dark.png", 1100, 700, true, 1500),
         (
             "image-large-noise",
             "large-noise.jpg",
@@ -128,14 +134,15 @@ fn run_image_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
             false,
             170,
         ),
-        ("image-compact", "compact.png", 640, 480, false, 32),
+        ("image-compact", "compact.png", 640, 480, false, 200),
     ];
 
     for (index, (name, filename, width, height, alpha, target_kb)) in
         specifications.into_iter().enumerate()
     {
         let input = fixtures.join(filename);
-        let output = outputs.join(format!("{name}.jpg"));
+        let output_extension = if alpha { "png" } else { "jpg" };
+        let output = outputs.join(format!("{name}.{output_extension}"));
         if let Err(error) = generate_image(&input, width, height, alpha, index as u32) {
             cases.push(failed_generation(name, "image", error));
             continue;
@@ -147,7 +154,8 @@ fn run_image_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
             &output,
             target_kb * 1024,
             MediaKind::Image,
-            false,
+            CompressionStrategy::Precise,
+            Some(false),
         ));
     }
 
@@ -166,7 +174,8 @@ fn run_image_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
             &output,
             size + 4096,
             MediaKind::Image,
-            true,
+            CompressionStrategy::Precise,
+            Some(true),
         ));
     }
 }
@@ -279,7 +288,8 @@ fn run_video_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
             &output,
             target_kb * 1024,
             MediaKind::Video,
-            false,
+            CompressionStrategy::Precise,
+            Some(false),
         ));
     }
 
@@ -297,11 +307,361 @@ fn run_video_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
                 &output,
                 size + 4096,
                 MediaKind::Video,
-                true,
+                CompressionStrategy::Precise,
+                Some(true),
             ));
         }
         Err(error) => cases.push(failed_generation("video-already-fits", "video", error)),
     }
+}
+
+fn run_strategy_matrix(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>) {
+    let regression_input = fixtures.join("regression-1254.png");
+    if let Err(error) = generate_image(&regression_input, 1254, 1254, false, 211) {
+        cases.push(failed_generation(
+            "image-1254-precise-regression",
+            "image",
+            error,
+        ));
+    } else {
+        let mut result = run_success_case(
+            "image-1254-precise-regression",
+            "image",
+            &regression_input,
+            &outputs.join("image-1254-precise-regression.jpg"),
+            2 * 1024 * 1024,
+            MediaKind::Image,
+            CompressionStrategy::Precise,
+            Some(false),
+        );
+        result.passed &= result.width == Some(1254) && result.height == Some(1254);
+        if result.width != Some(1254) || result.height != Some(1254) {
+            result
+                .detail
+                .push_str("; expected the highest-quality full-resolution candidate");
+        }
+        cases.push(result);
+    }
+
+    let image_input = fixtures.join("strategy-matrix-image.png");
+    if let Err(error) = generate_image(&image_input, 1200, 800, false, 233) {
+        cases.push(failed_generation("image-strategy-matrix", "image", error));
+    } else {
+        let image_size = fs::metadata(&image_input)
+            .map(|value| value.len())
+            .unwrap_or(0);
+        let targets = [
+            ("below", image_size + 4096),
+            ("slightly-over", image_size.saturating_mul(90) / 100),
+            (
+                "far-over",
+                (image_size.saturating_mul(20) / 100).max(80 * 1024),
+            ),
+        ];
+        for strategy in [
+            CompressionStrategy::Precise,
+            CompressionStrategy::Balanced,
+            CompressionStrategy::Smallest,
+        ] {
+            for (scenario, target) in targets {
+                let slug = strategy_slug(strategy);
+                let name = format!("image-{slug}-{scenario}");
+                let output = outputs.join(format!("image-{slug}-{scenario}.jpg"));
+                if scenario == "far-over" && strategy != CompressionStrategy::Precise {
+                    cases.push(run_expected_processing_failure(
+                        &name,
+                        &image_input,
+                        &output,
+                        target,
+                        strategy,
+                        "quality floor",
+                    ));
+                } else {
+                    cases.push(run_success_case(
+                        &name,
+                        "image-strategy",
+                        &image_input,
+                        &output,
+                        target,
+                        MediaKind::Image,
+                        strategy,
+                        if strategy == CompressionStrategy::Precise && scenario == "below" {
+                            Some(true)
+                        } else {
+                            None
+                        },
+                    ));
+                }
+            }
+            cases.push(run_expected_infeasible_plan(
+                &format!("image-{}-impossible", strategy_slug(strategy)),
+                &image_input,
+                MediaKind::Image,
+                strategy,
+                10 * 1024,
+            ));
+        }
+
+        let collision_output = outputs.join("collision-output.jpg");
+        let marker = b"existing output must remain";
+        fs::write(&collision_output, marker).unwrap();
+        let mut collision = run_success_case(
+            "output-name-collision",
+            "output-safety",
+            &image_input,
+            &collision_output,
+            (image_size.saturating_mul(35) / 100).max(120 * 1024),
+            MediaKind::Image,
+            CompressionStrategy::Precise,
+            Some(false),
+        );
+        let numbered_output = outputs.join("collision-output-2.jpg");
+        collision.passed &= fs::read(&collision_output).ok().as_deref() == Some(marker)
+            && numbered_output.is_file();
+        collision.detail.push_str(&format!(
+            "; originalOutputPreserved={}; numberedOutputExists={}",
+            fs::read(&collision_output).ok().as_deref() == Some(marker),
+            numbered_output.is_file()
+        ));
+        cases.push(collision);
+
+        let blocked_parent = outputs.join("blocked-output-parent");
+        fs::write(&blocked_parent, b"not a directory").unwrap();
+        let source_before = fs::read(&image_input).unwrap();
+        let analysis = analyze(image_input.to_string_lossy().as_ref()).unwrap();
+        let failed_output = blocked_parent.join("result.jpg");
+        let result = process(&ProcessRequest {
+            analysis,
+            target_bytes: (image_size.saturating_mul(35) / 100).max(120 * 1024),
+            output_path: failed_output.to_string_lossy().to_string(),
+            strategy: CompressionStrategy::Precise,
+        });
+        let source_unchanged = fs::read(&image_input).ok().as_deref() == Some(&source_before);
+        let no_working_files = !contains_working_files(outputs);
+        cases.push(CaseResult {
+            name: "output-write-failure-cleans-up".to_string(),
+            category: "output-safety".to_string(),
+            strategy: Some(CompressionStrategy::Precise),
+            outcome: None,
+            passed: result.is_err()
+                && source_unchanged
+                && no_working_files
+                && !failed_output.exists(),
+            expected: "write failure preserves the source and leaves no temporary output"
+                .to_string(),
+            detail: format!(
+                "error={}; sourceUnchanged={source_unchanged}; noWorkingFiles={no_working_files}",
+                result.err().unwrap_or_else(|| "none".to_string())
+            ),
+            input_bytes: Some(image_size),
+            output_bytes: None,
+            target_bytes: None,
+            duration_ms: None,
+            quality_score: None,
+            width: None,
+            height: None,
+        });
+    }
+
+    if !fitsend_core::video_tools_available() {
+        return;
+    }
+    let video_input = fixtures.join("strategy-matrix-video.mp4");
+    if let Err(error) = generate_video(&video_input, 960, 540, 1.5, true) {
+        cases.push(failed_generation("video-strategy-matrix", "video", error));
+        return;
+    }
+    let video_size = fs::metadata(&video_input)
+        .map(|value| value.len())
+        .unwrap_or(0);
+    let targets = [
+        ("below", video_size + 4096),
+        ("slightly-over", video_size.saturating_mul(85) / 100),
+        (
+            "far-over",
+            (video_size.saturating_mul(35) / 100).max(220 * 1024),
+        ),
+    ];
+    for strategy in [
+        CompressionStrategy::Precise,
+        CompressionStrategy::Balanced,
+        CompressionStrategy::Smallest,
+    ] {
+        for (scenario, target) in targets {
+            let slug = strategy_slug(strategy);
+            cases.push(run_success_case(
+                &format!("video-{slug}-{scenario}"),
+                "video-strategy",
+                &video_input,
+                &outputs.join(format!("video-{slug}-{scenario}.mp4")),
+                target,
+                MediaKind::Video,
+                strategy,
+                if strategy == CompressionStrategy::Precise && scenario == "below" {
+                    Some(true)
+                } else {
+                    None
+                },
+            ));
+        }
+        cases.push(run_expected_infeasible_plan(
+            &format!("video-{}-impossible", strategy_slug(strategy)),
+            &video_input,
+            MediaKind::Video,
+            strategy,
+            50 * 1024,
+        ));
+    }
+
+    let rotated_input = fixtures.join("rotated-portrait.mp4");
+    match generate_rotated_video(&rotated_input) {
+        Ok(()) => {
+            let rotated_size = fs::metadata(&rotated_input)
+                .map(|value| value.len())
+                .unwrap_or(0);
+            cases.push(run_success_case(
+                "video-rotated-metadata",
+                "video-metadata",
+                &rotated_input,
+                &outputs.join("video-rotated-metadata.mp4"),
+                (rotated_size.saturating_mul(70) / 100).max(260 * 1024),
+                MediaKind::Video,
+                CompressionStrategy::Precise,
+                Some(false),
+            ));
+        }
+        Err(error) => cases.push(failed_generation(
+            "video-rotated-metadata",
+            "video-metadata",
+            error,
+        )),
+    }
+}
+
+fn run_expected_infeasible_plan(
+    name: &str,
+    input: &Path,
+    kind: MediaKind,
+    strategy: CompressionStrategy,
+    target_bytes: u64,
+) -> CaseResult {
+    let analysis = analyze(input.to_string_lossy().as_ref());
+    let plan = analysis.and_then(|analysis| {
+        build(&PlanRequest {
+            analysis,
+            target_bytes,
+            strategy,
+        })
+    });
+    let (passed, detail) = match plan {
+        Ok(plan) => (!plan.feasible, format!("feasible={}", plan.feasible)),
+        Err(error) => (false, error),
+    };
+    CaseResult {
+        name: name.to_string(),
+        category: format!(
+            "{}-strategy",
+            match kind {
+                MediaKind::Image => "image",
+                MediaKind::Video => "video",
+            }
+        ),
+        strategy: Some(strategy),
+        outcome: None,
+        passed,
+        expected: "planner rejects the impossible target".to_string(),
+        detail,
+        input_bytes: fs::metadata(input).ok().map(|value| value.len()),
+        output_bytes: None,
+        target_bytes: Some(target_bytes),
+        duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
+    }
+}
+
+fn run_expected_processing_failure(
+    name: &str,
+    input: &Path,
+    output: &Path,
+    target_bytes: u64,
+    strategy: CompressionStrategy,
+    expected_text: &str,
+) -> CaseResult {
+    let source_before = fs::read(input).unwrap_or_default();
+    let analysis = analyze(input.to_string_lossy().as_ref());
+    let result = analysis.and_then(|analysis| {
+        process(&ProcessRequest {
+            analysis,
+            target_bytes,
+            output_path: output.to_string_lossy().to_string(),
+            strategy,
+        })
+    });
+    let detail = result
+        .as_ref()
+        .err()
+        .cloned()
+        .unwrap_or_else(|| "processing unexpectedly succeeded".to_string());
+    let source_unchanged = fs::read(input).ok().as_deref() == Some(source_before.as_slice());
+    let clean = !output.exists()
+        && !contains_working_files(output.parent().unwrap_or_else(|| Path::new(".")));
+    CaseResult {
+        name: name.to_string(),
+        category: "image-strategy".to_string(),
+        strategy: Some(strategy),
+        outcome: None,
+        passed: result.is_err()
+            && detail.to_ascii_lowercase().contains(expected_text)
+            && source_unchanged
+            && clean,
+        expected: format!("processing rejects a result below the {expected_text}"),
+        detail: format!("{detail}; sourceUnchanged={source_unchanged}; clean={clean}"),
+        input_bytes: Some(source_before.len() as u64),
+        output_bytes: None,
+        target_bytes: Some(target_bytes),
+        duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
+    }
+}
+
+fn strategy_slug(strategy: CompressionStrategy) -> &'static str {
+    match strategy {
+        CompressionStrategy::Precise => "precise",
+        CompressionStrategy::Balanced => "balanced",
+        CompressionStrategy::Smallest => "smallest",
+    }
+}
+
+fn contains_working_files(path: &Path) -> bool {
+    fs::read_dir(path).ok().is_some_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".fitsend-working-")
+        })
+    })
+}
+
+fn contains_processing_residue(outputs: &Path) -> bool {
+    if contains_working_files(outputs) {
+        return true;
+    }
+    fs::read_dir(std::env::temp_dir())
+        .ok()
+        .is_some_and(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with("fitsend-pass-")
+                    || name.contains(".fitsend-working-")
+                    || name.starts_with("fitsend-ssim-")
+            })
+        })
 }
 
 fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>) {
@@ -333,6 +693,8 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
     cases.push(CaseResult {
         name: "failure-infeasible-image".to_string(),
         category: "failure".to_string(),
+        strategy: Some(CompressionStrategy::Precise),
+        outcome: None,
         passed: !image_plan.feasible,
         expected: "planner rejects unusable image target".to_string(),
         detail: format!("feasible={}", image_plan.feasible),
@@ -340,6 +702,9 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
         output_bytes: None,
         target_bytes: Some(10 * 1024),
         duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
     });
 
     let video = fixtures.join("infeasible-video.mp4");
@@ -360,6 +725,8 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
         cases.push(CaseResult {
             name: "failure-infeasible-video".to_string(),
             category: "failure".to_string(),
+            strategy: Some(CompressionStrategy::Precise),
+            outcome: None,
             passed: !video_plan.feasible,
             expected: "planner rejects unusable video target".to_string(),
             detail: format!("feasible={}", video_plan.feasible),
@@ -367,10 +734,14 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
             output_bytes: None,
             target_bytes: Some(80 * 1024),
             duration_ms: None,
+            quality_score: None,
+            width: None,
+            height: None,
         });
     }
 
     let cancelled_output = outputs.join("cancelled-must-not-exist.jpg");
+    let cancellation_source_before = fs::read(&image).unwrap();
     let cancellation_analysis = analyze(image.to_string_lossy().as_ref()).unwrap();
     let cancellation_result = process_with_progress(
         &ProcessRequest {
@@ -379,17 +750,24 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
             output_path: cancelled_output.to_string_lossy().to_string(),
             strategy: CompressionStrategy::Precise,
         },
-        |progress| progress.stage != "Finding the best image quality",
+        |progress| progress.stage != "Finding the highest image quality",
     );
     let cancellation_error = cancellation_result.err();
+    let cancellation_source_unchanged =
+        fs::read(&image).ok().as_deref() == Some(cancellation_source_before.as_slice());
+    let cancellation_clean = !contains_processing_residue(outputs);
     cases.push(CaseResult {
         name: "cancellation-removes-partial-output".to_string(),
         category: "failure".to_string(),
+        strategy: Some(CompressionStrategy::Precise),
+        outcome: None,
         passed: cancellation_error.as_deref() == Some(PROCESS_CANCELLED)
-            && !cancelled_output.exists(),
+            && !cancelled_output.exists()
+            && cancellation_source_unchanged
+            && cancellation_clean,
         expected: "cancel returns the cancellation code and leaves no output".to_string(),
         detail: format!(
-            "error={}; outputExists={}",
+            "error={}; outputExists={}; sourceUnchanged={cancellation_source_unchanged}; clean={cancellation_clean}",
             cancellation_error.as_deref().unwrap_or("none"),
             cancelled_output.exists()
         ),
@@ -397,9 +775,56 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
         output_bytes: None,
         target_bytes: None,
         duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
     });
+
+    if video.exists() {
+        let cancelled_video_output = outputs.join("cancelled-video-must-not-exist.mp4");
+        let video_source_before = fs::read(&video).unwrap();
+        let video_analysis = analyze(video.to_string_lossy().as_ref()).unwrap();
+        let video_cancel_result = process_with_progress(
+            &ProcessRequest {
+                analysis: video_analysis,
+                target_bytes: 300 * 1024,
+                output_path: cancelled_video_output.to_string_lossy().to_string(),
+                strategy: CompressionStrategy::Precise,
+            },
+            |progress| progress.stage != "Encoding pass 1 of 2",
+        );
+        let error = video_cancel_result.err();
+        let source_unchanged =
+            fs::read(&video).ok().as_deref() == Some(video_source_before.as_slice());
+        let clean = !contains_processing_residue(outputs);
+        cases.push(CaseResult {
+            name: "video-cancellation-cleans-up".to_string(),
+            category: "failure".to_string(),
+            strategy: Some(CompressionStrategy::Precise),
+            outcome: None,
+            passed: error.as_deref() == Some(PROCESS_CANCELLED)
+                && !cancelled_video_output.exists()
+                && source_unchanged
+                && clean,
+            expected: "video cancellation leaves the source intact and no processing residue"
+                .to_string(),
+            detail: format!(
+                "error={}; outputExists={}; sourceUnchanged={source_unchanged}; clean={clean}",
+                error.as_deref().unwrap_or("none"),
+                cancelled_video_output.exists()
+            ),
+            input_bytes: Some(video_source_before.len() as u64),
+            output_bytes: None,
+            target_bytes: Some(300 * 1024),
+            duration_ms: None,
+            quality_score: None,
+            width: None,
+            height: None,
+        });
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_success_case(
     name: &str,
     category: &str,
@@ -407,7 +832,8 @@ fn run_success_case(
     output: &Path,
     target_bytes: u64,
     expected_kind: MediaKind,
-    expect_copy: bool,
+    strategy: CompressionStrategy,
+    expect_no_change: Option<bool>,
 ) -> CaseResult {
     let analysis = match analyze(input.to_string_lossy().as_ref()) {
         Ok(analysis) => analysis,
@@ -416,6 +842,7 @@ fn run_success_case(
                 name,
                 category,
                 target_bytes,
+                Some(strategy),
                 format!("analysis failed: {error}"),
             )
         }
@@ -426,13 +853,14 @@ fn run_success_case(
             name,
             category,
             target_bytes,
+            Some(strategy),
             "media kind did not match".to_string(),
         );
     }
     let plan = match build(&PlanRequest {
         analysis: analysis.clone(),
         target_bytes,
-        strategy: CompressionStrategy::Precise,
+        strategy,
     }) {
         Ok(plan) => plan,
         Err(error) => {
@@ -440,15 +868,17 @@ fn run_success_case(
                 name,
                 category,
                 target_bytes,
+                Some(strategy),
                 format!("planning failed: {error}"),
             )
         }
     };
-    if !plan.feasible || plan.already_fits != expect_copy {
+    if !plan.feasible || expect_no_change.is_some_and(|expected| plan.already_fits != expected) {
         return failed_case(
             name,
             category,
             target_bytes,
+            Some(strategy),
             format!(
                 "unexpected plan: feasible={}, alreadyFits={}",
                 plan.feasible, plan.already_fits
@@ -456,10 +886,10 @@ fn run_success_case(
         );
     }
     let result = match process(&ProcessRequest {
-        analysis,
+        analysis: analysis.clone(),
         target_bytes,
         output_path: output.to_string_lossy().to_string(),
-        strategy: CompressionStrategy::Precise,
+        strategy,
     }) {
         Ok(result) => result,
         Err(error) => {
@@ -467,32 +897,67 @@ fn run_success_case(
                 name,
                 category,
                 target_bytes,
+                Some(strategy),
                 format!("processing failed: {error}"),
             )
         }
     };
-    let mut passed = result.verified && result.output_bytes <= target_bytes && output.is_file();
+    let result_path = Path::new(&result.output_path);
+    let mut passed = result.verified && result.output_bytes <= target_bytes;
+    match (expect_no_change, result.outcome) {
+        (Some(true), ProcessOutcome::NoChange) | (None, ProcessOutcome::NoChange) => {
+            passed &= result_path == input
+                && !output.exists()
+                && result.output_bytes == input_bytes
+                && input_bytes <= target_bytes;
+        }
+        (Some(false), ProcessOutcome::Created) | (None, ProcessOutcome::Created) => {
+            passed &= result_path.is_file();
+        }
+        _ => passed = false,
+    }
     let mut detail = format!(
-        "{} -> {} bytes; {}×{}; {} ms; {} attempt(s)",
+        "{strategy:?}/{:?}; {} -> {} bytes; {}×{}; quality={}; {} ms; {} attempt(s)",
+        result.outcome,
         input_bytes,
         result.output_bytes,
         result.width,
         result.height,
+        result
+            .quality_score
+            .map(|score| format!("{score:.4}"))
+            .unwrap_or_else(|| "n/a".to_string()),
         result.duration_ms,
         result.attempts
     );
 
-    if expected_kind == MediaKind::Video && !expect_copy {
+    if expected_kind == MediaKind::Video && result.outcome == ProcessOutcome::Created {
         match analyze(result.output_path.as_str()) {
             Ok(output_analysis) => {
                 let compatible = output_analysis.video_codec.as_deref() == Some("h264")
                     && (!output_analysis.has_audio
                         || output_analysis.audio_codec.as_deref() == Some("aac"));
-                passed &= compatible;
+                let duration_preserved =
+                    match (analysis.duration_seconds, output_analysis.duration_seconds) {
+                        (Some(input), Some(output)) => {
+                            (input - output).abs() <= input.mul_add(0.05, 0.15)
+                        }
+                        (None, None) => true,
+                        _ => false,
+                    };
+                let media_preserved = output_analysis.has_audio == analysis.has_audio
+                    && output_analysis.width == result.width
+                    && output_analysis.height == result.height
+                    && duration_preserved;
+                passed &= compatible && media_preserved;
                 detail.push_str(&format!(
-                    "; codecs={}/{}",
+                    "; codecs={}/{}; audioPreserved={}; durationPreserved={}; analyzedDimensions={}×{}",
                     output_analysis.video_codec.as_deref().unwrap_or("none"),
-                    output_analysis.audio_codec.as_deref().unwrap_or("none")
+                    output_analysis.audio_codec.as_deref().unwrap_or("none"),
+                    output_analysis.has_audio == analysis.has_audio,
+                    duration_preserved,
+                    output_analysis.width,
+                    output_analysis.height,
                 ));
             }
             Err(error) => {
@@ -505,6 +970,8 @@ fn run_success_case(
     CaseResult {
         name: name.to_string(),
         category: category.to_string(),
+        strategy: Some(strategy),
+        outcome: Some(result.outcome),
         passed,
         expected: format!("verified {expected_kind:?} at or below {target_bytes} bytes"),
         detail,
@@ -512,6 +979,9 @@ fn run_success_case(
         output_bytes: Some(result.output_bytes),
         target_bytes: Some(target_bytes),
         duration_ms: Some(result.duration_ms),
+        quality_score: result.quality_score,
+        width: Some(result.width),
+        height: Some(result.height),
     }
 }
 
@@ -524,6 +994,8 @@ fn run_expected_analysis_failure(name: &str, input: &Path, expected_text: &str) 
     CaseResult {
         name: name.to_string(),
         category: "failure".to_string(),
+        strategy: None,
+        outcome: None,
         passed: result.is_err() && detail.contains(expected_text),
         expected: format!("analysis fails with '{expected_text}'"),
         detail,
@@ -531,6 +1003,9 @@ fn run_expected_analysis_failure(name: &str, input: &Path, expected_text: &str) 
         output_bytes: None,
         target_bytes: None,
         duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
     }
 }
 
@@ -558,7 +1033,13 @@ fn generate_image(
         Some("jpg" | "jpeg") => ImageFormat::Jpeg,
         _ => ImageFormat::Png,
     };
-    DynamicImage::ImageRgba8(pixels)
+    let image = DynamicImage::ImageRgba8(pixels);
+    let image = if alpha {
+        image
+    } else {
+        DynamicImage::ImageRgb8(image.to_rgb8())
+    };
+    image
         .save_with_format(path, format)
         .map_err(|error| format!("image generation failed: {error}"))
 }
@@ -624,6 +1105,8 @@ fn failed_generation(name: &str, category: &str, error: String) -> CaseResult {
     CaseResult {
         name: name.to_string(),
         category: category.to_string(),
+        strategy: None,
+        outcome: None,
         passed: false,
         expected: "fixture generation succeeds".to_string(),
         detail: error,
@@ -631,13 +1114,56 @@ fn failed_generation(name: &str, category: &str, error: String) -> CaseResult {
         output_bytes: None,
         target_bytes: None,
         duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
     }
 }
 
-fn failed_case(name: &str, category: &str, target_bytes: u64, detail: String) -> CaseResult {
+fn generate_rotated_video(path: &Path) -> Result<(), String> {
+    let source = path.with_file_name("rotated-source.mp4");
+    generate_video(&source, 960, 540, 2.0, true)?;
+    let ffmpeg = std::env::var_os("FITSEND_FFMPEG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    let output = Command::new(ffmpeg)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-display_rotation:v:0",
+            "90",
+            "-i",
+        ])
+        .arg(&source)
+        .args(["-c", "copy"])
+        .arg(path)
+        .output()
+        .map_err(|error| format!("rotated video generator could not start: {error}"))?;
+    let _ = fs::remove_file(source);
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "rotated video generation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+fn failed_case(
+    name: &str,
+    category: &str,
+    target_bytes: u64,
+    strategy: Option<CompressionStrategy>,
+    detail: String,
+) -> CaseResult {
     CaseResult {
         name: name.to_string(),
         category: category.to_string(),
+        strategy,
+        outcome: None,
         passed: false,
         expected: format!("verified output at or below {target_bytes} bytes"),
         detail,
@@ -645,20 +1171,48 @@ fn failed_case(name: &str, category: &str, target_bytes: u64, detail: String) ->
         output_bytes: None,
         target_bytes: Some(target_bytes),
         duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
     }
 }
 
 fn markdown_report(report: &AcceptanceReport) -> String {
     let mut markdown = format!(
-        "# FitSend Acceptance Report\n\n- Total: {}\n- Passed: {}\n- Failed: {}\n\n| Case | Category | Result | Detail |\n|---|---|---:|---|\n",
+        "# FitSend Acceptance Report\n\n- Total: {}\n- Passed: {}\n- Failed: {}\n\n| Case | Category | Strategy | Result | Outcome | Bytes (input → output / target) | Quality | Dimensions | Time | Detail |\n|---|---|---|---:|---|---|---:|---|---:|---|\n",
         report.total, report.passed, report.failed
     );
     for case in &report.cases {
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} → {} / {} | {} | {} | {} | {} |\n",
             case.name,
             case.category,
+            case.strategy
+                .map(|strategy| format!("{strategy:?}"))
+                .unwrap_or_else(|| "—".to_string()),
             if case.passed { "PASS" } else { "FAIL" },
+            case.outcome
+                .map(|outcome| format!("{outcome:?}"))
+                .unwrap_or_else(|| "—".to_string()),
+            case.input_bytes
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            case.output_bytes
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            case.target_bytes
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            case.quality_score
+                .map(|value| format!("{value:.4}"))
+                .unwrap_or_else(|| "—".to_string()),
+            match (case.width, case.height) {
+                (Some(width), Some(height)) => format!("{width}×{height}"),
+                _ => "—".to_string(),
+            },
+            case.duration_ms
+                .map(|value| format!("{value} ms"))
+                .unwrap_or_else(|| "—".to_string()),
             case.detail.replace('|', "\\|").replace('\n', " ")
         ));
     }

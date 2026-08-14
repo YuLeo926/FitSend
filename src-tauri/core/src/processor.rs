@@ -15,8 +15,7 @@ use crate::{
     output::OutputTransaction,
     planner,
     progress::{report, ProcessProgress},
-    toolchain,
-    video_processor,
+    toolchain, video_processor,
 };
 
 pub fn process(request: &ProcessRequest) -> Result<ProcessResult, String> {
@@ -113,7 +112,13 @@ fn process_image(
     let candidate = match decision {
         ImageDecision::Created(candidate) => candidate,
         ImageDecision::NoChange(reason) => {
-            report(callback, 100, "Original is already the best choice", None, 1)?;
+            report(
+                callback,
+                100,
+                "Original is already the best choice",
+                None,
+                1,
+            )?;
             return Ok(ProcessResult {
                 output_path: request.analysis.path.clone(),
                 output_bytes: request.analysis.size_bytes,
@@ -219,6 +224,20 @@ fn process_video(
             .map_err(|error| format!("FitSend could not verify the video output: {error}"))?
             .len();
         if output_bytes <= request.target_bytes {
+            let analyzed = crate::analyzer::analyze(output_path.to_string_lossy().as_ref())?;
+            let duration_delta = analyzed.duration_seconds.unwrap_or(0.0)
+                - request.analysis.duration_seconds.unwrap_or(0.0);
+            if analyzed.video_codec.as_deref() != Some("h264")
+                || analyzed.has_audio != request.analysis.has_audio
+                || analyzed.width != plan.width
+                || analyzed.height != plan.height
+                || duration_delta.abs() > 0.10
+            {
+                return Err(
+                    "FitSend rejected a video result that changed its duration, dimensions, audio, or compatibility."
+                        .to_string(),
+                );
+            }
             report(callback, 100, "Verified and ready", None, attempt)?;
             return Ok(ProcessResult {
                 output_path: output_path.to_string_lossy().to_string(),
@@ -307,6 +326,8 @@ fn process_quality_video(
         let analyzed = crate::analyzer::analyze(output_path.to_string_lossy().as_ref())?;
         if analyzed.video_codec.as_deref() != Some("h264")
             || analyzed.has_audio != request.analysis.has_audio
+            || analyzed.width != candidate.width
+            || analyzed.height != candidate.height
         {
             continue;
         }
@@ -349,8 +370,10 @@ fn process_quality_video(
             quality_score: Some(1.0),
         });
     }
-    Err("FitSend cannot meet this limit without crossing the selected video quality floor."
-        .to_string())
+    Err(
+        "FitSend cannot meet this limit without crossing the selected video quality floor."
+            .to_string(),
+    )
 }
 
 struct VideoEncodingOptions {

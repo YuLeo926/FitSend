@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchTotals, overallProgress, pathKey, primaryActionLabel, statusLabel, type BatchItem } from "./batch";
+import { allItemsTerminal, batchTotals, cancelWaitingItems, overallProgress, pathKey, primaryActionLabel, statusLabel, type BatchItem } from "./batch";
 import type { MediaAnalysis, ProcessResult } from "./types";
 
 function media(sizeBytes: number): MediaAnalysis {
@@ -83,5 +83,21 @@ describe("batch calculations", () => {
     expect(primaryActionLabel(8)).toBe("Optimize 8 files");
     expect(statusLabel("noChange")).toBe("No change needed");
     expect(statusLabel("failed")).toBe("Needs attention");
+  });
+
+  it("cancels only waiting rows and recognizes a mixed terminal batch", () => {
+    const cancelled = cancelWaitingItems([
+      item({ status: "completed" }),
+      item({ status: "failed" }),
+      item({ status: "waiting" }),
+      item({ status: "waiting" }),
+    ]);
+    expect(cancelled.map((entry) => entry.status)).toEqual([
+      "completed",
+      "failed",
+      "cancelled",
+      "cancelled",
+    ]);
+    expect(allItemsTerminal(cancelled)).toBe(true);
   });
 });

@@ -1,6 +1,4 @@
-use crate::domain::{
-    CompressionPlan, CompressionStrategy, MediaAnalysis, MediaKind, PlanRequest,
-};
+use crate::domain::{CompressionPlan, CompressionStrategy, MediaAnalysis, MediaKind, PlanRequest};
 
 const MIN_TARGET_BYTES: u64 = 8 * 1024;
 const MIN_VIDEO_BITRATE_KBPS: u64 = 180;
@@ -56,7 +54,10 @@ fn image_plan(
     };
     let mut warnings = Vec::new();
     if analysis.has_alpha {
-        warnings.push("This image contains transparency, which will be preserved in a PNG output.".to_string());
+        warnings.push(
+            "This image contains transparency, which will be preserved in a PNG output."
+                .to_string(),
+        );
     }
     if ratio < 0.1 {
         warnings.push(
