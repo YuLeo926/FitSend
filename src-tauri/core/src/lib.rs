@@ -7,6 +7,7 @@ mod processor;
 mod progress;
 pub mod quality;
 mod toolchain;
+mod video_processor;
 
 pub use analyzer::analyze;
 pub use domain::{

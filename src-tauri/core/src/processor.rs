@@ -10,12 +10,13 @@ use std::{
 use image::ImageReader;
 
 use crate::{
-    domain::{MediaKind, ProcessOutcome, ProcessRequest, ProcessResult},
+    domain::{CompressionStrategy, MediaKind, ProcessOutcome, ProcessRequest, ProcessResult},
     image_processor::{choose_image_candidate, ImageDecision},
     output::OutputTransaction,
     planner,
     progress::{report, ProcessProgress},
     toolchain,
+    video_processor,
 };
 
 pub fn process(request: &ProcessRequest) -> Result<ProcessResult, String> {
@@ -179,6 +180,9 @@ fn process_video(
     output_path: &Path,
     callback: &mut dyn FnMut(ProcessProgress) -> bool,
 ) -> Result<ProcessResult, String> {
+    if request.strategy != CompressionStrategy::Precise {
+        return process_quality_video(request, output_path, callback);
+    }
     let plan = planner::build(&crate::domain::PlanRequest {
         analysis: request.analysis.clone(),
         target_bytes: request.target_bytes,
@@ -199,6 +203,7 @@ fn process_video(
             has_audio: request.analysis.has_audio,
             source_width: request.analysis.width,
             output_width: plan.width,
+            output_height: plan.height,
             duration_seconds: request.analysis.duration_seconds.unwrap_or(1.0),
         };
         encode_video_passes(
@@ -245,12 +250,116 @@ fn process_video(
         .to_string())
 }
 
+fn process_quality_video(
+    request: &ProcessRequest,
+    output_path: &Path,
+    callback: &mut dyn FnMut(ProcessProgress) -> bool,
+) -> Result<ProcessResult, String> {
+    let candidates = video_processor::candidate_plans(
+        &request.analysis,
+        request.target_bytes,
+        request.strategy,
+    )?;
+    let source_already_fits = request.analysis.size_bytes <= request.target_bytes;
+    for (index, candidate) in candidates.into_iter().enumerate() {
+        let attempt = (index + 1) as u8;
+        if output_path.exists() {
+            let _ = fs::remove_file(output_path);
+        }
+        let encoding = VideoEncodingOptions {
+            video_bitrate_kbps: candidate.video_bitrate_kbps,
+            audio_bitrate_kbps: candidate.audio_bitrate_kbps,
+            has_audio: request.analysis.has_audio,
+            source_width: request.analysis.width,
+            output_width: candidate.width,
+            output_height: candidate.height,
+            duration_seconds: request.analysis.duration_seconds.unwrap_or(1.0),
+        };
+        encode_video_passes(
+            &request.analysis.path,
+            output_path,
+            &encoding,
+            attempt,
+            callback,
+        )?;
+        let output_bytes = fs::metadata(output_path)
+            .map_err(|error| format!("FitSend could not verify the video output: {error}"))?
+            .len();
+        if output_bytes > request.target_bytes || output_bytes >= request.analysis.size_bytes {
+            continue;
+        }
+        if request.strategy == CompressionStrategy::Balanced
+            && source_already_fits
+            && output_bytes > request.analysis.size_bytes.saturating_mul(90) / 100
+        {
+            continue;
+        }
+        report(callback, 94, "Checking visual quality", None, attempt)?;
+        let similarity = video_processor::measure_similarity(
+            &request.analysis.path,
+            output_path,
+            request.analysis.width,
+            request.analysis.height,
+        )?;
+        if !video_processor::similarity_passes(request.strategy, similarity) {
+            continue;
+        }
+        let analyzed = crate::analyzer::analyze(output_path.to_string_lossy().as_ref())?;
+        if analyzed.video_codec.as_deref() != Some("h264")
+            || analyzed.has_audio != request.analysis.has_audio
+        {
+            continue;
+        }
+        let duration_delta = analyzed.duration_seconds.unwrap_or(0.0)
+            - request.analysis.duration_seconds.unwrap_or(0.0);
+        if duration_delta.abs() > 0.10 {
+            continue;
+        }
+        report(callback, 100, "Verified and ready", None, attempt)?;
+        return Ok(ProcessResult {
+            output_path: output_path.to_string_lossy().to_string(),
+            output_bytes,
+            target_bytes: request.target_bytes,
+            verified: true,
+            attempts: attempt,
+            width: candidate.width,
+            height: candidate.height,
+            duration_ms: 0,
+            outcome: ProcessOutcome::Created,
+            reason: format!(
+                "Created a verified video at {:.3} mean visual similarity.",
+                similarity.mean
+            ),
+            quality_score: Some(similarity.mean),
+        });
+    }
+
+    if source_already_fits {
+        return Ok(ProcessResult {
+            output_path: request.analysis.path.clone(),
+            output_bytes: request.analysis.size_bytes,
+            target_bytes: request.target_bytes,
+            verified: true,
+            attempts: 0,
+            width: request.analysis.width,
+            height: request.analysis.height,
+            duration_ms: 0,
+            outcome: ProcessOutcome::NoChange,
+            reason: "No worthwhile smaller video passed the selected quality check.".to_string(),
+            quality_score: Some(1.0),
+        });
+    }
+    Err("FitSend cannot meet this limit without crossing the selected video quality floor."
+        .to_string())
+}
+
 struct VideoEncodingOptions {
     video_bitrate_kbps: u64,
     audio_bitrate_kbps: u64,
     has_audio: bool,
     source_width: u32,
     output_width: u32,
+    output_height: u32,
     duration_seconds: f64,
 }
 
@@ -274,8 +383,11 @@ fn encode_video_passes(
         "-map", "0:v:0", "-c:v", "libx264", "-preset", "medium", "-b:v", &bitrate, "-pix_fmt",
         "yuv420p",
     ]);
-    if encoding.output_width > 0 && encoding.source_width > encoding.output_width {
-        first.args(["-vf", &format!("scale={}:-2", encoding.output_width)]);
+    if encoding.output_width > 0 && encoding.source_width != encoding.output_width {
+        first.args([
+            "-vf",
+            &format!("scale={}:{}", encoding.output_width, encoding.output_height),
+        ]);
     }
     first.args([
         "-pass",
@@ -308,8 +420,11 @@ fn encode_video_passes(
         "-map", "0:v:0", "-c:v", "libx264", "-preset", "medium", "-b:v", &bitrate, "-pix_fmt",
         "yuv420p",
     ]);
-    if encoding.output_width > 0 && encoding.source_width > encoding.output_width {
-        second.args(["-vf", &format!("scale={}:-2", encoding.output_width)]);
+    if encoding.output_width > 0 && encoding.source_width != encoding.output_width {
+        second.args([
+            "-vf",
+            &format!("scale={}:{}", encoding.output_width, encoding.output_height),
+        ]);
     }
     second.args(["-pass", "2", "-passlogfile", &passlog_value]);
     if encoding.has_audio {
@@ -670,7 +785,7 @@ mod tests {
         assert!(!plan.already_fits);
 
         let result = process(&ProcessRequest {
-            analysis,
+            analysis: analysis.clone(),
             target_bytes: 700 * 1024,
             output_path: output.to_string_lossy().to_string(),
             strategy: crate::CompressionStrategy::Precise,
@@ -683,6 +798,17 @@ mod tests {
         let output_analysis = sample_analysis(&output);
         assert_eq!(output_analysis.video_codec.as_deref(), Some("h264"));
         assert_eq!(output_analysis.audio_codec.as_deref(), Some("aac"));
+
+        let balanced_output = directory.path().join("source.balanced.fitsend.mp4");
+        let balanced = process(&ProcessRequest {
+            analysis: analysis.clone(),
+            target_bytes: analysis.size_bytes,
+            output_path: balanced_output.to_string_lossy().to_string(),
+            strategy: crate::CompressionStrategy::Balanced,
+        })
+        .unwrap();
+        assert!(balanced.verified);
+        assert!(balanced.output_bytes <= analysis.size_bytes);
     }
 
     #[test]
