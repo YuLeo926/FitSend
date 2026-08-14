@@ -15,6 +15,7 @@ use image::{
 
 use crate::{
     domain::{MediaKind, ProcessRequest, ProcessResult},
+    output::OutputTransaction,
     planner,
     progress::{report, ProcessProgress},
     toolchain,
@@ -46,57 +47,45 @@ where
             .unwrap_or_else(|| "This target is not feasible for the selected file.".to_string()));
     }
 
-    let requested_output = Path::new(&request.output_path);
-    let output_path = non_overwriting_path(requested_output);
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("FitSend could not create the output folder: {error}"))?;
-    }
-
     if plan.already_fits {
-        report(&mut callback, 20, "Copying the original", None, 1)?;
-        fs::copy(&request.analysis.path, &output_path)
-            .map_err(|error| format!("FitSend could not create the verified copy: {error}"))?;
-        let metadata = fs::metadata(&output_path)
-            .map_err(|error| format!("FitSend could not verify the output: {error}"))?;
+        report(&mut callback, 20, "Checking the original", None, 1)?;
+        let metadata = fs::metadata(&request.analysis.path)
+            .map_err(|error| format!("FitSend could not verify the source: {error}"))?;
         if metadata.len() > request.target_bytes {
-            let _ = fs::remove_file(&output_path);
             return Err(
                 "The source file changed after it was analyzed and no longer fits the target. Analyze it again."
                     .to_string(),
             );
         }
-        if let Err(error) = report(&mut callback, 100, "Verified and ready", None, 1) {
-            let _ = fs::remove_file(&output_path);
-            return Err(error);
-        }
+        report(&mut callback, 100, "Original is ready", None, 1)?;
         return Ok(ProcessResult {
-            output_path: output_path.to_string_lossy().to_string(),
+            output_path: request.analysis.path.clone(),
             output_bytes: metadata.len(),
             target_bytes: request.target_bytes,
             verified: true,
-            attempts: 1,
+            attempts: 0,
             width: request.analysis.width,
             height: request.analysis.height,
             duration_ms: elapsed_millis(started_at),
-            outcome: crate::domain::ProcessOutcome::Created,
-            reason: "The original already fit and was copied without recompression.".to_string(),
+            outcome: crate::domain::ProcessOutcome::NoChange,
+            reason: "The original already fits, so FitSend left it untouched.".to_string(),
             quality_score: Some(1.0),
         });
     }
+
+    let transaction = OutputTransaction::new(Path::new(&request.output_path))?;
+    let output_path = transaction.temporary_path().to_path_buf();
 
     let result = match request.analysis.kind {
         MediaKind::Image => process_image(request, &output_path, &mut callback),
         MediaKind::Video => process_video(request, &output_path, &mut callback),
     };
 
-    if result.is_err() {
-        let _ = fs::remove_file(&output_path);
-    }
-    result.map(|mut completed| {
-        completed.duration_ms = elapsed_millis(started_at);
-        completed
-    })
+    let mut completed = result?;
+    let published_path = transaction.publish()?;
+    completed.output_path = published_path.to_string_lossy().to_string();
+    completed.duration_ms = elapsed_millis(started_at);
+    Ok(completed)
 }
 
 fn process_image(
@@ -449,29 +438,6 @@ fn best_jpeg_candidate(
         })
 }
 
-fn non_overwriting_path(requested: &Path) -> PathBuf {
-    if !requested.exists() {
-        return requested.to_path_buf();
-    }
-    let parent = requested.parent().unwrap_or_else(|| Path::new("."));
-    let stem = requested
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("fitsend");
-    let extension = requested.extension().and_then(|value| value.to_str());
-    for index in 2..10_000 {
-        let name = match extension {
-            Some(extension) => format!("{stem}-{index}.{extension}"),
-            None => format!("{stem}-{index}"),
-        };
-        let candidate = parent.join(name);
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    parent.join(format!("{stem}-{}", unique_suffix()))
-}
-
 fn temporary_passlog() -> PathBuf {
     std::env::temp_dir().join(format!(
         "fitsend-pass-{}-{}",
@@ -513,7 +479,7 @@ mod tests {
         let requested = directory.path().join("clip.fitsend.mp4");
         fs::write(&requested, b"existing").unwrap();
         assert_eq!(
-            non_overwriting_path(&requested)
+            crate::output::non_overwriting_path(&requested)
                 .file_name()
                 .and_then(|value| value.to_str()),
             Some("clip.fitsend-2.mp4")

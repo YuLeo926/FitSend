@@ -1,8 +1,10 @@
 mod analyzer;
 mod domain;
+mod output;
 mod planner;
 mod processor;
 mod progress;
+pub mod quality;
 mod toolchain;
 
 pub use analyzer::analyze;
@@ -16,4 +18,8 @@ pub use progress::{ProcessProgress, PROCESS_CANCELLED};
 
 pub fn video_tools_available() -> bool {
     toolchain::available("ffmpeg") && toolchain::available("ffprobe")
+}
+
+pub fn cleanup_stale_outputs() {
+    output::cleanup_stale_outputs();
 }

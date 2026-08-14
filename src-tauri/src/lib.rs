@@ -105,6 +105,7 @@ fn cancel_process(jobs: tauri::State<'_, JobRegistry>, job_id: String) -> Result
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    fitsend_core::cleanup_stale_outputs();
     tauri::Builder::default()
         .manage(JobRegistry::default())
         .plugin(tauri_plugin_dialog::init())
