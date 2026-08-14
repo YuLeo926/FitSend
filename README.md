@@ -33,6 +33,8 @@ npm install
 npm run tauri dev
 ```
 
+FitSend is a desktop application. Opening the Vite URL directly in a web browser only previews the interface; browser pages cannot access the native file picker or the local media engine.
+
 Images work without FFmpeg. Bundled Windows releases include FFmpeg and FFprobe, so end users do not need to install them. Development builds prefer tools bundled beside the application and fall back to `PATH`; if neither is available, FitSend explains that video processing is unavailable instead of failing silently.
 
 ## Quality checks

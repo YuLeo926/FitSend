@@ -83,8 +83,19 @@ function App() {
   }, []);
 
   const chooseFile = useCallback(async () => {
-    const selected = await open({ multiple: false, directory: false, filters: fileFilters });
-    if (typeof selected === "string") await loadFile(selected);
+    if (!isTauri()) {
+      setError("This is the browser preview. Open the FitSend desktop app to choose and process local files.");
+      setPhase("error");
+      return;
+    }
+
+    try {
+      const selected = await open({ multiple: false, directory: false, filters: fileFilters });
+      if (typeof selected === "string") await loadFile(selected);
+    } catch (reason) {
+      setError(`FitSend could not open the file picker: ${String(reason)}`);
+      setPhase("error");
+    }
   }, [loadFile]);
 
   useEffect(() => {
@@ -421,7 +432,7 @@ function App() {
           {phase === "error" && error ? (
             <div className="error-card" role="alert">
               <CircleAlert size={24} />
-              <div><strong>FitSend couldn’t finish this file</strong><p>{error}</p></div>
+              <div><strong>FitSend needs your attention</strong><p>{error}</p></div>
               <button className="secondary-button" type="button" onClick={reset}>Try another</button>
             </div>
           ) : null}
@@ -482,7 +493,7 @@ function App() {
         </aside>
       </section>
 
-      <footer><span>FitSend 0.1.2</span><span>Images + video · Video powered by FFmpeg</span></footer>
+      <footer><span>FitSend 0.1.3</span><span>Images + video · Video powered by FFmpeg</span></footer>
     </main>
   );
 }
