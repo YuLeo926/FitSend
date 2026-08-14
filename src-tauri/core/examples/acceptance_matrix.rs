@@ -6,8 +6,8 @@ use std::{
 };
 
 use fitsend_core::{
-    analyze, build, process, process_with_progress, MediaKind, PlanRequest, ProcessRequest,
-    PROCESS_CANCELLED,
+    analyze, build, process, process_with_progress, CompressionStrategy, MediaKind, PlanRequest,
+    ProcessRequest, PROCESS_CANCELLED,
 };
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 use serde::Serialize;
@@ -327,6 +327,7 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
     let image_plan = build(&PlanRequest {
         analysis: image_analysis,
         target_bytes: 10 * 1024,
+        strategy: CompressionStrategy::Precise,
     })
     .unwrap();
     cases.push(CaseResult {
@@ -353,6 +354,7 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
         let video_plan = build(&PlanRequest {
             analysis: video_analysis,
             target_bytes: 80 * 1024,
+            strategy: CompressionStrategy::Precise,
         })
         .unwrap();
         cases.push(CaseResult {
@@ -375,6 +377,7 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
             analysis: cancellation_analysis,
             target_bytes: 100 * 1024,
             output_path: cancelled_output.to_string_lossy().to_string(),
+            strategy: CompressionStrategy::Precise,
         },
         |progress| progress.stage != "Finding the best image quality",
     );
@@ -429,6 +432,7 @@ fn run_success_case(
     let plan = match build(&PlanRequest {
         analysis: analysis.clone(),
         target_bytes,
+        strategy: CompressionStrategy::Precise,
     }) {
         Ok(plan) => plan,
         Err(error) => {
@@ -455,6 +459,7 @@ fn run_success_case(
         analysis,
         target_bytes,
         output_path: output.to_string_lossy().to_string(),
+        strategy: CompressionStrategy::Precise,
     }) {
         Ok(result) => result,
         Err(error) => {

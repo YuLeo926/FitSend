@@ -1,4 +1,6 @@
-use crate::domain::{CompressionPlan, MediaAnalysis, MediaKind, PlanRequest};
+use crate::domain::{
+    CompressionPlan, CompressionStrategy, MediaAnalysis, MediaKind, PlanRequest,
+};
 
 const MIN_TARGET_BYTES: u64 = 8 * 1024;
 const MIN_VIDEO_BITRATE_KBPS: u64 = 180;
@@ -11,8 +13,9 @@ pub fn build(request: &PlanRequest) -> Result<CompressionPlan, String> {
         return Err("Choose a target of at least 8 KB.".to_string());
     }
 
-    if analysis.size_bytes <= target_bytes {
+    if analysis.size_bytes <= target_bytes && request.strategy == CompressionStrategy::Precise {
         return Ok(CompressionPlan {
+            strategy: request.strategy,
             already_fits: true,
             feasible: true,
             target_bytes,
@@ -31,12 +34,16 @@ pub fn build(request: &PlanRequest) -> Result<CompressionPlan, String> {
     }
 
     match analysis.kind {
-        MediaKind::Image => image_plan(analysis, target_bytes),
-        MediaKind::Video => video_plan(analysis, target_bytes),
+        MediaKind::Image => image_plan(analysis, target_bytes, request.strategy),
+        MediaKind::Video => video_plan(analysis, target_bytes, request.strategy),
     }
 }
 
-fn image_plan(analysis: &MediaAnalysis, target_bytes: u64) -> Result<CompressionPlan, String> {
+fn image_plan(
+    analysis: &MediaAnalysis,
+    target_bytes: u64,
+    strategy: CompressionStrategy,
+) -> Result<CompressionPlan, String> {
     let ratio = target_bytes as f64 / analysis.size_bytes as f64;
     let quality_label = if ratio >= 0.7 {
         "Excellent"
@@ -63,6 +70,7 @@ fn image_plan(analysis: &MediaAnalysis, target_bytes: u64) -> Result<Compression
     }
 
     Ok(CompressionPlan {
+        strategy,
         already_fits: false,
         feasible: target_bytes >= 12 * 1024,
         target_bytes,
@@ -80,7 +88,11 @@ fn image_plan(analysis: &MediaAnalysis, target_bytes: u64) -> Result<Compression
     })
 }
 
-fn video_plan(analysis: &MediaAnalysis, target_bytes: u64) -> Result<CompressionPlan, String> {
+fn video_plan(
+    analysis: &MediaAnalysis,
+    target_bytes: u64,
+    strategy: CompressionStrategy,
+) -> Result<CompressionPlan, String> {
     let duration = analysis
         .duration_seconds
         .filter(|value| *value > 0.0)
@@ -135,6 +147,7 @@ fn video_plan(analysis: &MediaAnalysis, target_bytes: u64) -> Result<Compression
     }
 
     Ok(CompressionPlan {
+        strategy,
         already_fits: false,
         feasible,
         target_bytes,
@@ -182,6 +195,8 @@ mod tests {
             width: 1920,
             height: 1080,
             duration_seconds: Some(60.0),
+            frame_rate: Some(30.0),
+            rotation_degrees: 0,
             video_codec: Some("h264".to_string()),
             audio_codec: Some("aac".to_string()),
             has_audio: true,
@@ -197,6 +212,7 @@ mod tests {
         let plan = build(&PlanRequest {
             analysis,
             target_bytes: 10 * 1024 * 1024,
+            strategy: CompressionStrategy::Precise,
         })
         .unwrap();
         assert!(plan.already_fits);
@@ -204,10 +220,37 @@ mod tests {
     }
 
     #[test]
+    fn precise_skips_a_source_that_already_fits() {
+        let mut analysis = video_analysis();
+        analysis.size_bytes = 4 * 1024 * 1024;
+        let plan = build(&PlanRequest {
+            analysis,
+            target_bytes: 10 * 1024 * 1024,
+            strategy: crate::domain::CompressionStrategy::Precise,
+        })
+        .unwrap();
+        assert!(plan.already_fits);
+    }
+
+    #[test]
+    fn balanced_still_considers_a_source_that_already_fits() {
+        let mut analysis = video_analysis();
+        analysis.size_bytes = 4 * 1024 * 1024;
+        let plan = build(&PlanRequest {
+            analysis,
+            target_bytes: 10 * 1024 * 1024,
+            strategy: crate::domain::CompressionStrategy::Balanced,
+        })
+        .unwrap();
+        assert!(!plan.already_fits);
+    }
+
+    #[test]
     fn derives_a_video_bitrate_below_the_target() {
         let plan = build(&PlanRequest {
             analysis: video_analysis(),
             target_bytes: 10 * 1024 * 1024,
+            strategy: CompressionStrategy::Precise,
         })
         .unwrap();
         assert!(plan.feasible);
@@ -220,6 +263,7 @@ mod tests {
         let plan = build(&PlanRequest {
             analysis: video_analysis(),
             target_bytes: 400 * 1024,
+            strategy: CompressionStrategy::Precise,
         })
         .unwrap();
         assert!(!plan.feasible);
@@ -235,6 +279,7 @@ mod tests {
         let plan = build(&PlanRequest {
             analysis,
             target_bytes: 10 * 1024,
+            strategy: CompressionStrategy::Precise,
         })
         .unwrap();
         assert!(!plan.feasible);

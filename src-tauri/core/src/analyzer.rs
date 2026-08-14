@@ -47,6 +47,8 @@ pub fn analyze(path_value: &str) -> Result<MediaAnalysis, String> {
             width,
             height,
             duration_seconds: None,
+            frame_rate: None,
+            rotation_degrees: 0,
             video_codec: None,
             audio_codec: None,
             has_audio: false,
@@ -60,7 +62,7 @@ pub fn analyze(path_value: &str) -> Result<MediaAnalysis, String> {
     }
 
     Err(format!(
-        "Unsupported file type. FitSend v0.1 accepts JPG, PNG, MP4, MOV, MKV, and WebM. Received: .{}",
+        "Unsupported file type. FitSend accepts JPG, PNG, MP4, MOV, MKV, and WebM. Received: .{}",
         if extension.is_empty() { "unknown" } else { &extension }
     ))
 }
@@ -118,6 +120,20 @@ fn analyze_video(
         .or_else(|| payload["format"]["duration"].as_str())
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| *value > 0.0);
+    let frame_rate = video["avg_frame_rate"]
+        .as_str()
+        .and_then(parse_fraction)
+        .filter(|value| *value > 0.0);
+    let rotation_degrees = video["side_data_list"]
+        .as_array()
+        .and_then(|items| items.iter().find_map(|item| item["rotation"].as_i64()))
+        .or_else(|| {
+            video["tags"]["rotate"]
+                .as_str()
+                .and_then(|value| value.parse::<i64>().ok())
+        })
+        .map(normalize_rotation)
+        .unwrap_or(0);
 
     Ok(MediaAnalysis {
         path: path_value.to_string(),
@@ -128,6 +144,8 @@ fn analyze_video(
         width: video["width"].as_u64().unwrap_or(0) as u32,
         height: video["height"].as_u64().unwrap_or(0) as u32,
         duration_seconds,
+        frame_rate,
+        rotation_degrees,
         video_codec: video["codec_name"].as_str().map(str::to_string),
         audio_codec: audio
             .and_then(|stream| stream["codec_name"].as_str())
@@ -136,6 +154,23 @@ fn analyze_video(
         has_alpha: false,
         ffmpeg_available: command_available("ffmpeg"),
     })
+}
+
+fn parse_fraction(value: &str) -> Option<f64> {
+    let (numerator, denominator) = value.split_once('/')?;
+    let numerator = numerator.parse::<f64>().ok()?;
+    let denominator = denominator.parse::<f64>().ok()?;
+    (denominator.abs() > f64::EPSILON).then_some(numerator / denominator)
+}
+
+fn normalize_rotation(value: i64) -> i32 {
+    let normalized = value.rem_euclid(360) as i32;
+    match normalized {
+        45..=134 => 90,
+        135..=224 => 180,
+        225..=314 => 270,
+        _ => 0,
+    }
 }
 
 pub fn command_available(command: &str) -> bool {
@@ -173,5 +208,13 @@ mod tests {
         let error = analyze(path.to_string_lossy().as_ref()).unwrap_err();
         assert!(error.contains("Unsupported file type"));
         assert!(error.contains(".txt"));
+    }
+
+    #[test]
+    fn parses_common_frame_rates_and_rotation() {
+        assert_eq!(parse_fraction("30000/1001").unwrap().round(), 30.0);
+        assert_eq!(parse_fraction("0/0"), None);
+        assert_eq!(normalize_rotation(-90), 270);
+        assert_eq!(normalize_rotation(89), 90);
     }
 }

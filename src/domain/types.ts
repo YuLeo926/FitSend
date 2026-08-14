@@ -1,4 +1,6 @@
 export type MediaKind = "image" | "video";
+export type CompressionStrategy = "precise" | "balanced" | "smallest";
+export type ProcessOutcome = "created" | "noChange";
 
 export type DestinationProfile = {
   id: string;
@@ -19,6 +21,8 @@ export type MediaAnalysis = {
   width: number;
   height: number;
   durationSeconds: number | null;
+  frameRate: number | null;
+  rotationDegrees: number;
   videoCodec: string | null;
   audioCodec: string | null;
   hasAudio: boolean;
@@ -27,6 +31,7 @@ export type MediaAnalysis = {
 };
 
 export type CompressionPlan = {
+  strategy: CompressionStrategy;
   alreadyFits: boolean;
   feasible: boolean;
   targetBytes: number;
@@ -51,6 +56,9 @@ export type ProcessResult = {
   width: number;
   height: number;
   durationMs: number;
+  outcome: ProcessOutcome;
+  reason: string;
+  qualityScore: number | null;
 };
 
 export type ProcessProgress = {
@@ -64,10 +72,12 @@ export type ProcessProgress = {
 export type PlanRequest = {
   analysis: MediaAnalysis;
   targetBytes: number;
+  strategy: CompressionStrategy;
 };
 
 export type ProcessRequest = {
   analysis: MediaAnalysis;
   targetBytes: number;
   outputPath: string;
+  strategy: CompressionStrategy;
 };

@@ -18,6 +18,7 @@ fn main() {
         analysis,
         target_bytes,
         output_path,
+        strategy: fitsend_core::CompressionStrategy::Precise,
     })
     .expect("the smoke-test video should process");
     assert!(result.verified);

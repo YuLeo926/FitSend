@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { formatBytes, formatDuration, formatElapsed, outputDefaultPath, savedPercent } from "./domain/format";
 import { bytesFromCustomLimit, profileById, profiles } from "./domain/profiles";
-import type { CompressionPlan, MediaAnalysis, ProcessProgress, ProcessResult } from "./domain/types";
+import type { CompressionPlan, CompressionStrategy, MediaAnalysis, ProcessProgress, ProcessResult } from "./domain/types";
 import "./styles.css";
 
 type Phase = "idle" | "analyzing" | "ready" | "processing" | "success" | "error";
@@ -45,6 +45,7 @@ function App() {
   const [profileId, setProfileId] = useState("discord");
   const [customValue, setCustomValue] = useState(10);
   const [customUnit, setCustomUnit] = useState<"KB" | "MB">("MB");
+  const [strategy] = useState<CompressionStrategy>("balanced");
   const [dragActive, setDragActive] = useState(false);
   const [copied, setCopied] = useState(false);
   const [progress, setProgress] = useState<ProcessProgress | null>(null);
@@ -167,7 +168,7 @@ function App() {
       return;
     }
 
-    invoke<CompressionPlan>("build_plan", { request: { analysis, targetBytes } })
+    invoke<CompressionPlan>("build_plan", { request: { analysis, targetBytes, strategy } })
       .then((nextPlan) => {
         if (current) setPlan(nextPlan);
       })
@@ -179,7 +180,7 @@ function App() {
     return () => {
       current = false;
     };
-  }, [analysis, phase, targetBytes]);
+  }, [analysis, phase, strategy, targetBytes]);
 
   const makeItFit = async () => {
     if (!analysis || !plan || !plan.feasible || targetBytes <= 0) return;
@@ -204,7 +205,7 @@ function App() {
     try {
       const nextResult = await invoke<ProcessResult>("process_media", {
         jobId,
-        request: { analysis, targetBytes, outputPath },
+        request: { analysis, targetBytes, outputPath, strategy },
       });
       setResult(nextResult);
       setPhase("success");

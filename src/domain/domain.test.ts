@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatBytes, formatDuration, formatElapsed, outputDefaultPath, savedPercent } from "./format";
 import { bytesFromCustomLimit, profileById } from "./profiles";
+import { strategies, strategyById } from "./strategies";
 
 describe("FitSend domain helpers", () => {
   it("converts custom limits to bytes", () => {
@@ -35,5 +36,15 @@ describe("FitSend domain helpers", () => {
     expect(formatElapsed(65_000)).toBe("1m 5s");
     expect(savedPercent(10_000, 2_500)).toBe(75);
     expect(savedPercent(100, 120)).toBe(0);
+  });
+
+  it("exposes three unique compression strategies with balanced as the fallback", () => {
+    expect(strategies.map((strategy) => strategy.id)).toEqual([
+      "precise",
+      "balanced",
+      "smallest",
+    ]);
+    expect(new Set(strategies.map((strategy) => strategy.id)).size).toBe(3);
+    expect(strategyById("balanced").name).toBe("Balanced");
   });
 });

@@ -36,6 +36,7 @@ where
     let plan = planner::build(&crate::domain::PlanRequest {
         analysis: request.analysis.clone(),
         target_bytes: request.target_bytes,
+        strategy: request.strategy,
     })?;
     if !plan.feasible {
         return Err(plan
@@ -78,6 +79,9 @@ where
             width: request.analysis.width,
             height: request.analysis.height,
             duration_ms: elapsed_millis(started_at),
+            outcome: crate::domain::ProcessOutcome::Created,
+            reason: "The original already fit and was copied without recompression.".to_string(),
+            quality_score: Some(1.0),
         });
     }
 
@@ -133,6 +137,9 @@ fn process_image(
         width,
         height,
         duration_ms: 0,
+        outcome: crate::domain::ProcessOutcome::Created,
+        reason: "Created and verified under the selected limit.".to_string(),
+        quality_score: None,
     })
 }
 
@@ -144,6 +151,7 @@ fn process_video(
     let plan = planner::build(&crate::domain::PlanRequest {
         analysis: request.analysis.clone(),
         target_bytes: request.target_bytes,
+        strategy: request.strategy,
     })?;
     let mut bitrate = plan
         .video_bitrate_kbps
@@ -185,6 +193,9 @@ fn process_video(
                 width: plan.width,
                 height: plan.height,
                 duration_ms: 0,
+                outcome: crate::domain::ProcessOutcome::Created,
+                reason: "Created and verified under the selected limit.".to_string(),
+                quality_score: None,
             });
         }
 
@@ -536,6 +547,8 @@ mod tests {
                 width: 1,
                 height: 1,
                 duration_seconds: None,
+                frame_rate: None,
+                rotation_degrees: 0,
                 video_codec: None,
                 audio_codec: None,
                 has_audio: false,
@@ -544,6 +557,7 @@ mod tests {
             },
             target_bytes: 8 * 1024,
             output_path: output.to_string_lossy().to_string(),
+            strategy: crate::CompressionStrategy::Precise,
         };
 
         let error = process(&request).unwrap_err();
@@ -575,6 +589,7 @@ mod tests {
         let plan = build(&PlanRequest {
             analysis: analysis.clone(),
             target_bytes: 160 * 1024,
+            strategy: crate::CompressionStrategy::Precise,
         })
         .unwrap();
         assert!(!plan.already_fits);
@@ -587,6 +602,7 @@ mod tests {
             analysis,
             target_bytes: 160 * 1024,
             output_path: output.to_string_lossy().to_string(),
+            strategy: crate::CompressionStrategy::Precise,
         })
         .unwrap();
 
@@ -626,6 +642,7 @@ mod tests {
                 analysis,
                 target_bytes: 70 * 1024,
                 output_path: output.to_string_lossy().to_string(),
+                strategy: crate::CompressionStrategy::Precise,
             },
             |progress| {
                 percentages.push(progress.percent);
@@ -657,6 +674,7 @@ mod tests {
                 analysis,
                 target_bytes: 80 * 1024,
                 output_path: output.to_string_lossy().to_string(),
+                strategy: crate::CompressionStrategy::Precise,
             },
             |progress| progress.percent < 20,
         )
@@ -718,6 +736,7 @@ mod tests {
         let plan = build(&PlanRequest {
             analysis: analysis.clone(),
             target_bytes: 700 * 1024,
+            strategy: crate::CompressionStrategy::Precise,
         })
         .unwrap();
         assert!(plan.feasible);
@@ -727,6 +746,7 @@ mod tests {
             analysis,
             target_bytes: 700 * 1024,
             output_path: output.to_string_lossy().to_string(),
+            strategy: crate::CompressionStrategy::Precise,
         })
         .unwrap();
 
@@ -775,6 +795,7 @@ mod tests {
                 analysis,
                 target_bytes: 900 * 1024,
                 output_path: output.to_string_lossy().to_string(),
+                strategy: crate::CompressionStrategy::Precise,
             },
             |progress| progress.stage != "Encoding pass 1 of 2",
         )

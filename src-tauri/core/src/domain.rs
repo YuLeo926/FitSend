@@ -7,6 +7,21 @@ pub enum MediaKind {
     Video,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CompressionStrategy {
+    Precise,
+    Balanced,
+    Smallest,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProcessOutcome {
+    Created,
+    NoChange,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaAnalysis {
@@ -18,6 +33,8 @@ pub struct MediaAnalysis {
     pub width: u32,
     pub height: u32,
     pub duration_seconds: Option<f64>,
+    pub frame_rate: Option<f64>,
+    pub rotation_degrees: i32,
     pub video_codec: Option<String>,
     pub audio_codec: Option<String>,
     pub has_audio: bool,
@@ -30,6 +47,7 @@ pub struct MediaAnalysis {
 pub struct PlanRequest {
     pub analysis: MediaAnalysis,
     pub target_bytes: u64,
+    pub strategy: CompressionStrategy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,11 +56,13 @@ pub struct ProcessRequest {
     pub analysis: MediaAnalysis,
     pub target_bytes: u64,
     pub output_path: String,
+    pub strategy: CompressionStrategy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompressionPlan {
+    pub strategy: CompressionStrategy,
     pub already_fits: bool,
     pub feasible: bool,
     pub target_bytes: u64,
@@ -69,4 +89,7 @@ pub struct ProcessResult {
     pub width: u32,
     pub height: u32,
     pub duration_ms: u64,
+    pub outcome: ProcessOutcome,
+    pub reason: String,
+    pub quality_score: Option<f64>,
 }

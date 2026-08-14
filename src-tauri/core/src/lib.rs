@@ -7,7 +7,8 @@ mod toolchain;
 
 pub use analyzer::analyze;
 pub use domain::{
-    CompressionPlan, MediaAnalysis, MediaKind, PlanRequest, ProcessRequest, ProcessResult,
+    CompressionPlan, CompressionStrategy, MediaAnalysis, MediaKind, PlanRequest, ProcessOutcome,
+    ProcessRequest, ProcessResult,
 };
 pub use planner::build;
 pub use processor::{process, process_with_progress};
