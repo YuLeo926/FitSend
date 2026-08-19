@@ -10,17 +10,17 @@ export const strategies: readonly StrategyOption[] = [
   {
     id: "precise",
     name: "Precise fit",
-    description: "Highest quality under the limit",
+    description: "Use the most quality that still fits",
   },
   {
     id: "balanced",
     name: "Balanced",
-    description: "Smaller with almost no visible change",
+    description: "Keep it looking original; shrink only when worthwhile",
   },
   {
     id: "smallest",
     name: "Smallest acceptable",
-    description: "As small as possible above a safe quality floor",
+    description: "Go as small as possible without crossing the quality floor",
   },
 ];
 

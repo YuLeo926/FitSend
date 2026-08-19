@@ -45,6 +45,10 @@ export function allItemsTerminal(items: BatchItem[]): boolean {
   return items.length > 0 && items.every((item) => isTerminal(item.status));
 }
 
+export function isBatchConfigurationLocked(items: BatchItem[]): boolean {
+  return items.some((item) => item.plan !== null || item.result !== null);
+}
+
 export function batchTotals(items: BatchItem[]): BatchTotals {
   const originalBytes = items.reduce((sum, item) => sum + (item.analysis?.sizeBytes ?? 0), 0);
   const sendableBytes = items.reduce((sum, item) => {
@@ -77,7 +81,7 @@ export function overallProgress(items: BatchItem[]): number {
 }
 
 export function primaryActionLabel(count: number): string {
-  return `Optimize ${count} ${count === 1 ? "file" : "files"}`;
+  return `Make ${count} ${count === 1 ? "file" : "files"} fit`;
 }
 
 export function statusLabel(status: BatchStatus): string {
@@ -86,7 +90,7 @@ export function statusLabel(status: BatchStatus): string {
     waiting: "Ready",
     processing: "Optimizing",
     completed: "Ready to send",
-    noChange: "No change needed",
+    noChange: "Already fits",
     failed: "Needs attention",
     cancelled: "Cancelled",
   };

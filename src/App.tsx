@@ -18,7 +18,7 @@ import {
 import { BatchSummary } from "./components/BatchSummary";
 import { FileQueue } from "./components/FileQueue";
 import { StrategyPicker } from "./components/StrategyPicker";
-import { primaryActionLabel } from "./domain/batch";
+import { isBatchConfigurationLocked, primaryActionLabel } from "./domain/batch";
 import { formatBytes } from "./domain/format";
 import { bytesFromCustomLimit, profileById, profiles } from "./domain/profiles";
 import { strategyById } from "./domain/strategies";
@@ -51,6 +51,13 @@ function App() {
   const analyzing = queue.items.some((item) => item.status === "analyzing");
   const hasFiles = queue.items.length > 0;
   const validTarget = targetBytes >= 8 * 1024;
+  const configurationLocked = isBatchConfigurationLocked(queue.items);
+  const configurationDisabled = queue.running || configurationLocked;
+  const batchBadge = !validTarget
+    ? "Check limit"
+    : queue.allTerminal
+      ? `${queue.totals.completed + queue.totals.noChange} verified`
+      : `${readyCount} to fit`;
 
   const addFiles = useCallback(async () => {
     if (!isTauri()) {
@@ -100,9 +107,9 @@ function App() {
       </header>
 
       <section className="hero" aria-labelledby="page-title">
-        <div className="eyebrow"><Sparkles size={14} /> One limit. A whole batch.</div>
-        <h1 id="page-title">Make every file fit.<br />Keep every detail that matters.</h1>
-        <p>Choose where the files are going and how hard FitSend should optimize. Every result is checked locally before it is ready.</p>
+        <div className="eyebrow"><Sparkles size={14} /> Built for the limit. Checked before you send.</div>
+        <h1 id="page-title">Make every file<br />ready to send.</h1>
+        <p>Choose where it’s going. FitSend makes a verified copy under the limit without crossing a conservative quality floor.</p>
       </section>
 
       <section className="workspace" aria-live="polite">
@@ -115,8 +122,8 @@ function App() {
               disabled={queue.running}
             >
               <span className="drop-icon"><UploadCloud size={31} /></span>
-              <strong>Drop images and videos here</strong>
-              <span>or click to choose several files · JPG, PNG, MP4, MOV, MKV, WebM</span>
+              <strong>Drop files here to make them fit</strong>
+              <span>or choose several images and videos · JPG, PNG, MP4, MOV, MKV, WebM</span>
             </button>
           ) : (
             <div className="queue-shell">
@@ -149,22 +156,22 @@ function App() {
             <section className="plan-panel batch-plan">
               <div className="plan-heading">
                 <div>
-                  <span className="section-label">Batch plan</span>
-                  <h2>{selectedStrategy.name} for {activeProfile.name}</h2>
+                  <span className="section-label">Send plan</span>
+                  <h2>{activeProfile.name} · {selectedStrategy.name}</h2>
                 </div>
-                <span className={`quality-badge ${validTarget ? "good" : "warning"}`}>{validTarget ? `${readyCount} ready` : "Check limit"}</span>
+                <span className={`quality-badge ${validTarget ? "good" : "warning"}`}>{batchBadge}</span>
               </div>
               <div className="batch-route">
-                <div><span>Files</span><strong>{queue.items.length}</strong></div>
-                <div><span>Each must be under</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
-                <div><span>Method</span><strong>{selectedStrategy.name}</strong></div>
+                <div><span>Destination</span><strong>{activeProfile.shortLabel}</strong></div>
+                <div><span>Limit per file</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
+                <div><span>Quality rule</span><strong>{selectedStrategy.name}</strong></div>
               </div>
-              <p className="safe-note"><Check size={16} /> {selectedStrategy.description}. Every accepted output is measured again.</p>
+              <p className="safe-note"><Check size={16} /> {selectedStrategy.description}. FitSend measures every accepted file again before marking it ready to send.</p>
 
               {queue.running ? (
                 <div className="processing-panel batch-processing">
                   <div className="progress-heading">
-                    <div><span>Processing files one at a time</span><strong>{queue.progress}%</strong></div>
+                    <div><span>Making files fit, one at a time</span><strong>{queue.progress}%</strong></div>
                     <div className="progress-track" role="progressbar" aria-valuenow={queue.progress} aria-valuemin={0} aria-valuemax={100}>
                       <span style={{ width: `${queue.progress}%` }} />
                     </div>
@@ -184,12 +191,18 @@ function App() {
                   {analyzing ? "Reading selected files…" : primaryActionLabel(readyCount)}
                 </button>
               ) : (
-                <div className="batch-finished-note"><Check size={17} /> This batch is complete. Add more files to continue.</div>
+                <div className="batch-finished-note"><Check size={17} /> Every sendable file in this batch has been verified.</div>
               )}
             </section>
           ) : null}
 
-          {queue.allTerminal ? <BatchSummary totals={queue.totals} /> : null}
+          {queue.allTerminal ? (
+            <BatchSummary
+              totals={queue.totals}
+              destination={activeProfile.id === "custom" ? "your custom limit" : activeProfile.shortLabel}
+              targetBytes={targetBytes}
+            />
+          ) : null}
         </div>
 
         <aside className="destination-card">
@@ -206,7 +219,7 @@ function App() {
                 aria-checked={profileId === profile.id}
                 key={profile.id}
                 onClick={() => setProfileId(profile.id)}
-                disabled={queue.running}
+                disabled={configurationDisabled}
               >
                 <span className={`profile-dot ${profile.accent}`} />
                 <span><strong>{profile.name}</strong><small>{profile.description}</small></span>
@@ -219,8 +232,8 @@ function App() {
             <div className="custom-limit">
               <label htmlFor="custom-size">Maximum size for each file</label>
               <div>
-                <input id="custom-size" type="number" min="0.01" step="0.1" value={customValue} disabled={queue.running} onChange={(event) => setCustomValue(Number(event.target.value))} />
-                <select disabled={queue.running} value={customUnit} onChange={(event) => setCustomUnit(event.target.value as "KB" | "MB")}>
+                <input id="custom-size" type="number" min="0.01" step="0.1" value={customValue} disabled={configurationDisabled} onChange={(event) => setCustomValue(Number(event.target.value))} />
+                <select disabled={configurationDisabled} value={customUnit} onChange={(event) => setCustomUnit(event.target.value as "KB" | "MB")}>
                   <option>MB</option><option>KB</option>
                 </select>
               </div>
@@ -228,18 +241,22 @@ function App() {
             </div>
           ) : null}
 
-          <StrategyPicker value={strategy} disabled={queue.running} onChange={setStrategy} />
+          <StrategyPicker value={strategy} disabled={configurationDisabled} onChange={setStrategy} />
+
+          {configurationLocked ? (
+            <p className="config-lock-note">This destination and quality rule are locked to the verified results. Clear the batch to choose a new send plan.</p>
+          ) : null}
 
           <div className="constraint-receipt">
-            <div><span>Per-file ceiling</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
-            <div><span>Processing</span><strong>One at a time</strong></div>
-            <div><span>Final check</span><strong>Required</strong></div>
+            <div><span>Destination</span><strong>{activeProfile.shortLabel}</strong></div>
+            <div><span>Per-file limit</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
+            <div><span>Proof before send</span><strong>Size verified</strong></div>
           </div>
           <div className="local-promise"><HardDrive size={17} /><span><strong>Nothing is uploaded.</strong> Originals stay untouched.</span></div>
         </aside>
       </section>
 
-      <footer><span>FitSend 0.2.0</span><span>Images + video · Video powered by bundled FFmpeg</span></footer>
+      <footer><span>FitSend 0.2.1</span><span>Fits the limit · Protects quality · Verifies locally</span></footer>
     </main>
   );
 }

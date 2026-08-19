@@ -1,19 +1,21 @@
 # FitSend
 
-**Make your file accepted anywhere.**
+**Make every file ready to send.**
 
-FitSend is a local-first desktop utility that makes batches of images and videos fit a destination's per-file size limit. It measures and quality-checks every result before calling the batch complete.
+FitSend is a local-first desktop utility built around one promise: choose where an image or video is going, then get a verified copy under that destination's per-file limit without crossing a conservative visual-quality floor.
 
 ## Choose the limit and the strategy
 
 FitSend uses two independent choices:
 
-- **Destination:** Discord, email attachment, web upload, or an exact custom KB/MB ceiling. The limit applies to each file.
-- **Strategy:** **Precise fit** keeps the highest possible quality under the limit; **Balanced** only accepts a worthwhile saving with almost no visible change; **Smallest acceptable** searches for the smallest result above a conservative visual-quality floor.
+- **Destination:** Discord, email attachment, web upload, or an exact custom KB/MB ceiling. FitSend treats that destination as a concrete per-file acceptance rule.
+- **Quality guardrail:** **Precise fit** uses the most quality that still fits; **Balanced** keeps the file looking original and only accepts a worthwhile saving; **Smallest acceptable** searches for the smallest result without crossing its visual-quality floor.
 
 You can select or drop several JPG, PNG, MP4, MOV, MKV, and WebM files together. Mixed image/video batches run one file at a time to keep memory and CPU use predictable. A damaged or unsupported file is reported on its own row and does not stop later files.
 
-Each row shows its state, measured result, saving, and reason. The final summary reports the original total, sendable total, bytes saved, created results, unchanged originals, and failures.
+Each row shows whether the file already fits or which verified copy is ready to send. The final summary proves the accepted files are under the selected limit and reports the original total, verified total, bytes saved, created results, unchanged originals, and failures.
+
+Once processing begins, the destination and quality rule stay attached to that batch so its verification claim cannot be changed after the fact. Clear the batch before choosing a different send plan.
 
 ## Output and privacy behavior
 

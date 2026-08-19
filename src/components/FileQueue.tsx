@@ -53,7 +53,7 @@ export function FileQueue({ items, running, onRemove }: Props) {
               {item.error ? <p className="row-error">{item.error}</p> : null}
               {result ? (
                 <div className="row-result">
-                  <span>{result.outcome === "noChange" ? "Original kept" : `${formatBytes(result.outputBytes)} output`}</span>
+                  <span>{result.outcome === "noChange" ? "Already fits — original kept" : `${formatBytes(result.outputBytes)} verified output`}</span>
                   {result.outcome === "created" && analysis ? <span>{savedPercent(analysis.sizeBytes, result.outputBytes)}% smaller</span> : null}
                   <span>{result.reason}</span>
                 </div>

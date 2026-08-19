@@ -19,7 +19,7 @@ export function StrategyPicker({ value, disabled, onChange }: Props) {
     <div className="strategy-section">
       <div className="aside-heading strategy-heading">
         <span className="step-number">2</span>
-        <div><span className="section-label">Compression</span><h2>How should it fit?</h2></div>
+        <div><span className="section-label">Quality guardrail</span><h2>How should it fit?</h2></div>
       </div>
       <div className="strategy-options" role="radiogroup" aria-label="Compression strategy">
         {strategies.map((strategy) => {

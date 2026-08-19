@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allItemsTerminal, batchTotals, cancelWaitingItems, overallProgress, pathKey, primaryActionLabel, statusLabel, type BatchItem } from "./batch";
+import { allItemsTerminal, batchTotals, cancelWaitingItems, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel, type BatchItem } from "./batch";
 import type { MediaAnalysis, ProcessResult } from "./types";
 
 function media(sizeBytes: number): MediaAnalysis {
@@ -79,9 +79,9 @@ describe("batch calculations", () => {
 
   it("normalizes Windows paths and supplies plain-language labels", () => {
     expect(pathKey("C:\\Photos\\ONE.PNG")).toBe("c:/photos/one.png");
-    expect(primaryActionLabel(1)).toBe("Optimize 1 file");
-    expect(primaryActionLabel(8)).toBe("Optimize 8 files");
-    expect(statusLabel("noChange")).toBe("No change needed");
+    expect(primaryActionLabel(1)).toBe("Make 1 file fit");
+    expect(primaryActionLabel(8)).toBe("Make 8 files fit");
+    expect(statusLabel("noChange")).toBe("Already fits");
     expect(statusLabel("failed")).toBe("Needs attention");
   });
 
@@ -99,5 +99,12 @@ describe("batch calculations", () => {
       "cancelled",
     ]);
     expect(allItemsTerminal(cancelled)).toBe(true);
+  });
+
+  it("locks the send plan after processing has produced a result", () => {
+    expect(isBatchConfigurationLocked([item({ status: "waiting" })])).toBe(false);
+    expect(isBatchConfigurationLocked([
+      item({ status: "noChange", result: result(1_000, "noChange") }),
+    ])).toBe(true);
   });
 });
