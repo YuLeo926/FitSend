@@ -66,14 +66,22 @@ fn validate_request(request: &BatchBudgetRequest, require_minimums: bool) -> Res
                 item.id
             ));
         }
-        if item
-            .minimum_allocation_bytes
-            .is_some_and(|minimum| minimum > item.source_bytes)
-        {
-            return Err(format!(
-                "Minimum allocation for '{}' exceeds its source size.",
-                item.id
-            ));
+        if let Some(minimum) = item.minimum_allocation_bytes {
+            match request.scope {
+                LimitScope::BatchTotal if minimum > item.source_bytes => {
+                    return Err(format!(
+                        "Minimum allocation for '{}' exceeds its source size.",
+                        item.id
+                    ));
+                }
+                LimitScope::PerFile if minimum > request.ceiling_bytes => {
+                    return Err(format!(
+                        "Minimum allocation for '{}' exceeds the per-file ceiling.",
+                        item.id
+                    ));
+                }
+                _ => {}
+            }
         }
     }
 
@@ -351,6 +359,40 @@ mod tests {
             accepted: vec![],
         })
         .unwrap();
+        assert_eq!(
+            budget
+                .allocations
+                .iter()
+                .map(|entry| entry.target_bytes)
+                .collect::<Vec<_>>(),
+            vec![1_000_000, 1_000_000]
+        );
+    }
+
+    #[test]
+    fn per_file_rebalance_preserves_a_prior_ceiling_above_source_size() {
+        let initial = build_budget(&BatchBudgetRequest {
+            scope: LimitScope::PerFile,
+            ceiling_bytes: 1_000_000,
+            items: vec![item("small", 2_000, None), item("large", 5_000_000, None)],
+            accepted: vec![],
+        })
+        .unwrap();
+        let budget = rebalance_budget(&BatchBudgetRequest {
+            scope: LimitScope::PerFile,
+            ceiling_bytes: 1_000_000,
+            items: vec![
+                item("small", 2_000, Some(initial.allocations[0].target_bytes)),
+                item(
+                    "large",
+                    5_000_000,
+                    Some(initial.allocations[1].target_bytes),
+                ),
+            ],
+            accepted: vec![],
+        })
+        .unwrap();
+
         assert_eq!(
             budget
                 .allocations
