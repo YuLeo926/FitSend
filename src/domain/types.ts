@@ -2,15 +2,29 @@ export type MediaKind = "image" | "video";
 export type CompressionStrategy = "precise" | "balanced" | "smallest";
 export type ProcessOutcome = "created" | "noChange";
 
-export type DestinationProfile = {
+export type LimitScope = "perFile" | "batchTotal";
+export type DestinationFamily = "discord" | "email" | "web" | "custom" | "saved";
+
+export type DestinationRule = {
   id: string;
+  family: DestinationFamily;
   name: string;
   shortLabel: string;
   description: string;
+  scope: LimitScope;
+  publishedLimitLabel: string;
   maxBytes: number;
   acceptedKinds: MediaKind[];
+  sourceLabel: string;
+  sourceUrl: string | null;
+  verifiedOn: string | null;
+  ruleNote: string;
   accent: "coral" | "blue" | "ink";
+  builtIn: boolean;
 };
+
+// Compatibility bridge used by App.tsx until Task 6 migrates the UI.
+export type DestinationProfile = DestinationRule;
 
 export type MediaAnalysis = {
   path: string;
