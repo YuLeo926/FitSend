@@ -18,6 +18,21 @@ describe("saved send plans", () => {
     expect(parseSavedPlans(serializeSavedPlans([valid]))).toEqual([valid]);
   });
 
+  it("keeps the first persisted plan for a case-insensitive duplicate name", () => {
+    const first = createSavedPlan("Client portal", "perFile", 2_000_000, now, uuid(1));
+    const duplicate = createSavedPlan(" client PORTAL ", "batchTotal", 3_000_000, now, uuid(2));
+    const raw = JSON.stringify({ schemaVersion: 1, plans: [first, duplicate] });
+    expect(parseSavedPlans(raw)).toEqual([first]);
+  });
+
+  it("retains the first twenty unique valid persisted plans", () => {
+    const plans = Array.from({ length: 21 }, (_, index) =>
+      createSavedPlan(`Plan ${index + 1}`, "perFile", 1_000_000, now, uuid(index + 1)),
+    );
+    const raw = JSON.stringify({ schemaVersion: 1, plans });
+    expect(parseSavedPlans(raw)).toEqual(plans.slice(0, 20));
+  });
+
   it("requires explicit replacement for case-insensitive duplicate names", () => {
     const original = createSavedPlan("Client portal", "perFile", 2_000_000, now, uuid(1));
     const candidate = createSavedPlan(" client PORTAL ", "batchTotal", 3_000_000, now, uuid(2));

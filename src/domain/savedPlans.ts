@@ -84,8 +84,17 @@ export function parseSavedPlans(raw: string | null): SavedPlanRecord[] {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.schemaVersion !== 1 || !Array.isArray(parsed.plans)) return [];
-    const validPlans = parsed.plans.filter((plan): plan is SavedPlanRecord => planError(plan) === null);
-    return validPlans.length <= MAX_SAVED_PLANS ? validPlans : [];
+    const names = new Set<string>();
+    const validPlans: SavedPlanRecord[] = [];
+    for (const plan of parsed.plans) {
+      if (planError(plan) !== null) continue;
+      const savedPlan = plan as SavedPlanRecord;
+      const name = comparableName(savedPlan.name);
+      if (names.has(name) || validPlans.length >= MAX_SAVED_PLANS) continue;
+      names.add(name);
+      validPlans.push(savedPlan);
+    }
+    return validPlans;
   } catch {
     return [];
   }
