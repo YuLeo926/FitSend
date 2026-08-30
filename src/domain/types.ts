@@ -5,6 +5,21 @@ export type ProcessOutcome = "created" | "noChange";
 export type LimitScope = "perFile" | "batchTotal";
 export type DestinationFamily = "discord" | "email" | "web" | "custom" | "saved";
 
+export type SavedPlanRecord = {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  scope: LimitScope;
+  maxBytes: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SavedPlanMutation = {
+  plans: SavedPlanRecord[];
+  error: string | null;
+};
+
 export type DestinationRule = {
   id: string;
   family: DestinationFamily;
