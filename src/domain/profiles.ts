@@ -29,11 +29,11 @@ export function ruleById(id: string): DestinationRule {
 }
 export function rulesForFamily(family: DestinationFamily): DestinationRule[] { return builtInRules.filter((rule) => rule.family === family); }
 export function customRule(maxBytes: number, scope: LimitScope): DestinationRule {
-  return { id: "custom", family: "custom", name: "Custom limit", shortLabel: "Custom", description: "Fit the exact ceiling you need", scope, publishedLimitLabel: "Custom", maxBytes, acceptedKinds: [...mediaKinds], sourceLabel: "FitSend generic default", sourceUrl: null, verifiedOn: null, ruleNote: "Set a limit between 8 KB and 10 GB.", accent: "ink", builtIn: false };
+  return { id: "custom", family: "custom", name: "Custom limit", shortLabel: "Custom", description: "Fit the exact ceiling you need", scope, publishedLimitLabel: "Custom", maxBytes, acceptedKinds: [...mediaKinds], sourceLabel: "FitSend generic default", sourceUrl: null, verifiedOn: null, ruleNote: "Set a limit between 8 KiB and 10 GiB.", accent: "ink", builtIn: false };
 }
 export function validateCustomLimit(value: number): { valid: boolean; message: string | null } {
-  if (!Number.isFinite(value) || value < MIN_CUSTOM_BYTES) return { valid: false, message: "Custom limit must be at least 8 KB." };
-  if (value > MAX_CUSTOM_BYTES) return { valid: false, message: "Custom limit must be at most 10 GB." };
+  if (!Number.isFinite(value) || value < MIN_CUSTOM_BYTES) return { valid: false, message: "Custom limit must be at least 8 KiB." };
+  if (value > MAX_CUSTOM_BYTES) return { valid: false, message: "Custom limit must be at most 10 GiB." };
   return { valid: true, message: null };
 }
 export function scopeLabel(scope: LimitScope): string { return scope === "perFile" ? "Per file" : "Batch total"; }

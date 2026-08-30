@@ -61,10 +61,11 @@ describe("FitSend domain helpers", () => {
   });
 
   it("validates and materializes an exact custom rule", () => {
-    expect(validateCustomLimit(7 * 1024).valid).toBe(false);
+    expect(customRule(12 * 1024 * 1024, "batchTotal").ruleNote).toBe("Set a limit between 8 KiB and 10 GiB.");
+    expect(validateCustomLimit(7 * 1024)).toEqual({ valid: false, message: "Custom limit must be at least 8 KiB." });
     expect(validateCustomLimit(8 * 1024).valid).toBe(true);
     expect(validateCustomLimit(10 * 1024 * 1024 * 1024).valid).toBe(true);
-    expect(validateCustomLimit(10 * 1024 * 1024 * 1024 + 1).valid).toBe(false);
+    expect(validateCustomLimit(10 * 1024 * 1024 * 1024 + 1)).toEqual({ valid: false, message: "Custom limit must be at most 10 GiB." });
     expect(customRule(12 * 1024 * 1024, "batchTotal").scope).toBe("batchTotal");
   });
 
