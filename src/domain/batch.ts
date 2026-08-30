@@ -18,6 +18,7 @@ export type BatchItem = {
   progress: ProcessProgress | null;
   result: ProcessResult | null;
   error: string | null;
+  allocationBytes: number | null;
 };
 
 export type BatchTotals = {

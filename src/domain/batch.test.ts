@@ -1,63 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { allItemsTerminal, batchTotals, cancelWaitingItems, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel, type BatchItem } from "./batch";
-import type { MediaAnalysis, ProcessResult } from "./types";
-
-function media(sizeBytes: number): MediaAnalysis {
-  return {
-    path: "C:/photo.png",
-    name: "photo.png",
-    extension: "png",
-    kind: "image",
-    sizeBytes,
-    width: 100,
-    height: 100,
-    durationSeconds: null,
-    frameRate: null,
-    rotationDegrees: 0,
-    videoCodec: null,
-    audioCodec: null,
-    hasAudio: false,
-    hasAlpha: false,
-    ffmpegAvailable: true,
-  };
-}
-
-function result(outputBytes: number, outcome: "created" | "noChange"): ProcessResult {
-  return {
-    outputPath: "C:/photo.fitsend.jpg",
-    outputBytes,
-    targetBytes: 2_000,
-    verified: true,
-    attempts: outcome === "created" ? 1 : 0,
-    width: 100,
-    height: 100,
-    durationMs: 100,
-    outcome,
-    reason: "verified",
-    qualityScore: 0.99,
-  };
-}
-
-function item(overrides: Partial<BatchItem>): BatchItem {
-  return {
-    id: crypto.randomUUID(),
-    path: "C:/photo.png",
-    status: "waiting",
-    analysis: media(1_000),
-    plan: null,
-    progress: null,
-    result: null,
-    error: null,
-    ...overrides,
-  };
-}
+import { allItemsTerminal, batchTotals, cancelWaitingItems, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
+import { batchItem, media, result } from "./batch.test-fixtures";
 
 describe("batch calculations", () => {
   it("counts mixed terminal states and bytes", () => {
     const totals = batchTotals([
-      item({ status: "completed", analysis: media(1_000), result: result(600, "created") }),
-      item({ status: "noChange", analysis: media(500), result: result(500, "noChange") }),
-      item({ status: "failed", analysis: media(800), error: "broken" }),
+      batchItem({ status: "completed", analysis: media(1_000), result: result(600, "created") }),
+      batchItem({ status: "noChange", analysis: media(500), result: result(500, "noChange") }),
+      batchItem({ status: "failed", analysis: media(800), error: "broken" }),
     ]);
     expect(totals).toMatchObject({
       completed: 1,
@@ -71,9 +21,9 @@ describe("batch calculations", () => {
 
   it("includes the active item fraction in overall progress", () => {
     expect(overallProgress([
-      item({ status: "completed" }),
-      item({ status: "processing", progress: { jobId: "a", percent: 50, stage: "Encoding", encodedSeconds: null, attempt: 1 } }),
-      item({ status: "waiting" }),
+      batchItem({ status: "completed" }),
+      batchItem({ status: "processing", progress: { jobId: "a", percent: 50, stage: "Encoding", encodedSeconds: null, attempt: 1 } }),
+      batchItem({ status: "waiting" }),
     ])).toBe(50);
   });
 
@@ -87,10 +37,10 @@ describe("batch calculations", () => {
 
   it("cancels only waiting rows and recognizes a mixed terminal batch", () => {
     const cancelled = cancelWaitingItems([
-      item({ status: "completed" }),
-      item({ status: "failed" }),
-      item({ status: "waiting" }),
-      item({ status: "waiting" }),
+      batchItem({ status: "completed" }),
+      batchItem({ status: "failed" }),
+      batchItem({ status: "waiting" }),
+      batchItem({ status: "waiting" }),
     ]);
     expect(cancelled.map((entry) => entry.status)).toEqual([
       "completed",
@@ -102,9 +52,9 @@ describe("batch calculations", () => {
   });
 
   it("locks the send plan after processing has produced a result", () => {
-    expect(isBatchConfigurationLocked([item({ status: "waiting" })])).toBe(false);
+    expect(isBatchConfigurationLocked([batchItem({ status: "waiting" })])).toBe(false);
     expect(isBatchConfigurationLocked([
-      item({ status: "noChange", result: result(1_000, "noChange") }),
+      batchItem({ status: "noChange", result: result(1_000, "noChange") }),
     ])).toBe(true);
   });
 });

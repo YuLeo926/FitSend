@@ -5,6 +5,33 @@ export type ProcessOutcome = "created" | "noChange";
 export type LimitScope = "perFile" | "batchTotal";
 export type DestinationFamily = "discord" | "email" | "web" | "custom" | "saved";
 
+export type BudgetItemRequest = {
+  id: string;
+  sourceBytes: number;
+  minimumAllocationBytes: number | null;
+};
+
+export type AcceptedBudgetItem = { id: string; actualBytes: number };
+
+export type BatchBudgetRequest = {
+  scope: LimitScope;
+  ceilingBytes: number;
+  items: BudgetItemRequest[];
+  accepted: AcceptedBudgetItem[];
+};
+
+export type ItemAllocation = { id: string; targetBytes: number };
+
+export type BatchBudget = {
+  scope: LimitScope;
+  ceilingBytes: number;
+  acceptedBytes: number;
+  remainingBytes: number;
+  allocations: ItemAllocation[];
+  feasible: boolean;
+  reason: string | null;
+};
+
 export type SavedPlanRecord = {
   schemaVersion: 1;
   id: string;

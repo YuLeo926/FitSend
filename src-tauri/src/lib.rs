@@ -7,7 +7,8 @@ use std::{
 };
 
 use fitsend_core::{
-    CompressionPlan, MediaAnalysis, PlanRequest, ProcessProgress, ProcessRequest, ProcessResult,
+    BatchBudget, BatchBudgetRequest, CompressionPlan, MediaAnalysis, PlanRequest, ProcessProgress,
+    ProcessRequest, ProcessResult,
 };
 use serde::Serialize;
 use tauri::Emitter;
@@ -45,6 +46,16 @@ fn analyze_media(path: String) -> Result<MediaAnalysis, String> {
 #[tauri::command]
 fn build_plan(request: PlanRequest) -> Result<CompressionPlan, String> {
     fitsend_core::build(&request)
+}
+
+#[tauri::command]
+fn build_batch_budget(request: BatchBudgetRequest) -> Result<BatchBudget, String> {
+    fitsend_core::build_budget(&request)
+}
+
+#[tauri::command]
+fn rebalance_batch_budget(request: BatchBudgetRequest) -> Result<BatchBudget, String> {
+    fitsend_core::rebalance_budget(&request)
 }
 
 #[tauri::command]
@@ -113,6 +124,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             analyze_media,
             build_plan,
+            build_batch_budget,
+            rebalance_batch_budget,
             process_media,
             cancel_process
         ])

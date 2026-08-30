@@ -20,6 +20,7 @@ function newItem(path: string): BatchItem {
     progress: null,
     result: null,
     error: null,
+    allocationBytes: null,
   };
 }
 
