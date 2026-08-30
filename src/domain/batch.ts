@@ -52,6 +52,10 @@ export function allItemsTerminal(items: BatchItem[]): boolean {
   return items.length > 0 && items.every((item) => isTerminal(item.status));
 }
 
+export function isBatchAnalysisComplete(items: BatchItem[]): boolean {
+  return items.length > 0 && items.every((item) => item.status !== "analyzing");
+}
+
 export function isBatchConfigurationLocked(items: BatchItem[]): boolean {
   return items.some((item) => item.allocationBytes !== null || item.plan !== null || item.result !== null);
 }

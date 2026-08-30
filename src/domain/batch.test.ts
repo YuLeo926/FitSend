@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allItemsTerminal, batchTotals, cancelWaitingItems, failWaitingItems, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
+import { allItemsTerminal, batchTotals, cancelWaitingItems, failWaitingItems, isBatchAnalysisComplete, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
 import { batchItem, media, result } from "./batch.test-fixtures";
 
 describe("batch calculations", () => {
@@ -68,5 +68,19 @@ describe("batch calculations", () => {
     const next = failWaitingItems(items, "This total limit is too small for the selected file count.");
     expect(next.map((item) => item.status)).toEqual(["failed", "failed"]);
     expect(next.every((item) => item.error?.includes("too small"))).toBe(true);
+  });
+
+  it("does not allow a batch to start while any row is still analyzing", () => {
+    expect(isBatchAnalysisComplete([
+      batchItem({ status: "waiting" }),
+      batchItem({ status: "analyzing", analysis: null }),
+    ])).toBe(false);
+  });
+
+  it("allows analyzed waiting rows alongside failed terminal rows", () => {
+    expect(isBatchAnalysisComplete([
+      batchItem({ status: "waiting" }),
+      batchItem({ status: "failed", error: "unreadable" }),
+    ])).toBe(true);
   });
 });

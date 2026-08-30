@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { allItemsTerminal, batchTotals, cancelWaitingItems, failWaitingItems, overallProgress, pathKey, type BatchItem } from "../domain/batch";
+import { allItemsTerminal, batchTotals, cancelWaitingItems, failWaitingItems, isBatchAnalysisComplete, overallProgress, pathKey, type BatchItem } from "../domain/batch";
 import { applyBudgetAllocations, budgetRequest } from "../domain/budget";
 import { outputDefaultPath } from "../domain/format";
 import type { BatchBudget, CompressionPlan, CompressionStrategy, DestinationRule, MediaAnalysis, ProcessProgress, ProcessResult } from "../domain/types";
@@ -94,8 +94,9 @@ export function useBatchQueue({ rule, strategy }: UseBatchQueueOptions) {
   }, [replaceItems, running]);
 
   const start = useCallback(async () => {
-    if (running || rule.maxBytes < 8 * 1024) return;
-    const waiting = itemsRef.current.filter((item) => item.status === "waiting" && item.analysis);
+    const currentItems = itemsRef.current;
+    if (running || rule.maxBytes < 8 * 1024 || !isBatchAnalysisComplete(currentItems)) return;
+    const waiting = currentItems.filter((item) => item.status === "waiting" && item.analysis);
     if (waiting.length === 0) return;
     cancelRequested.current = false;
     setRunning(true);
