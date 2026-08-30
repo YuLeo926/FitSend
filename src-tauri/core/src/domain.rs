@@ -22,6 +22,56 @@ pub enum ProcessOutcome {
     NoChange,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum LimitScope {
+    PerFile,
+    BatchTotal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetItemRequest {
+    pub id: String,
+    pub source_bytes: u64,
+    pub minimum_allocation_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptedBudgetItem {
+    pub id: String,
+    pub actual_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchBudgetRequest {
+    pub scope: LimitScope,
+    pub ceiling_bytes: u64,
+    pub items: Vec<BudgetItemRequest>,
+    pub accepted: Vec<AcceptedBudgetItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemAllocation {
+    pub id: String,
+    pub target_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchBudget {
+    pub scope: LimitScope,
+    pub ceiling_bytes: u64,
+    pub accepted_bytes: u64,
+    pub remaining_bytes: u64,
+    pub allocations: Vec<ItemAllocation>,
+    pub feasible: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaAnalysis {
