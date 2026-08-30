@@ -141,15 +141,15 @@ Because every accepted result is no larger than its allocation, the aggregate pr
 
 The allocator uses deterministic capped proportional water-filling:
 
-1. Reserve the existing absolute minimum target of 8 KiB for every valid item.
-2. If `item count × 8 KiB` exceeds the working ceiling, reject the batch plan before processing.
-3. Distribute the remaining bytes in proportion to each item's reducible source bytes: `max(sourceBytes - 8 KiB, 1)`.
+1. Reserve `min(sourceBytes, 8 KiB)` for every valid item. A source smaller than 8 KiB is capped at its source size and never enlarged.
+2. If the sum of those per-item reserves exceeds the working ceiling, reject the batch plan before processing.
+3. Distribute the remaining bytes in proportion to each item's reducible source bytes: `max(sourceBytes - min(sourceBytes, 8 KiB), 1)`.
 4. Cap an item's allocation at its source size; redistribute bytes released by a cap among uncapped items using the same weights.
 5. Resolve fractional bytes with the largest-remainder method. Ties follow the user's selection order, making output deterministic.
 
 This produces approximately the same required reduction ratio across the batch while avoiding the worst failure of an equal split, where a small image and a long video receive identical budgets. Source byte size already incorporates duration, resolution, frame rate, and source bitrate for video, so it is the primary demand signal. Media-specific quality and feasibility remain the responsibility of the existing strategy planner and processor.
 
-The allocator is not allowed to assign more than the source size, less than 8 KiB, or a set of allocations whose sum exceeds the aggregate working ceiling.
+The allocator is not allowed to assign more than the source size, less than `min(sourceBytes, 8 KiB)`, or a set of allocations whose sum exceeds the aggregate working ceiling.
 
 ### Forward reallocation
 
@@ -304,7 +304,7 @@ The summary retains original total, accepted total, saved bytes, new outputs, ke
 - Invalid built-in rule data is a development error covered by tests; the production fallback is Discord Safe.
 - Invalid saved entries are ignored individually and never crash startup.
 - A custom ceiling outside 8 KiB–10 GiB disables the primary action with a direct validation message.
-- An aggregate ceiling smaller than `valid item count × 8 KiB` is rejected before processing.
+- An aggregate ceiling smaller than the sum of `min(sourceBytes, 8 KiB)` across valid items is rejected before processing.
 - Unsupported, corrupt, unreadable, or missing files keep the existing row-local failure behavior.
 - A strategy that cannot meet one item's allocation without crossing its quality floor fails that row and continues; it never borrows by violating another waiting allocation.
 - Real output over its assigned target is rejected by the existing processor and never counted as accepted.
@@ -329,7 +329,7 @@ The summary retains original total, accepted total, saved bytes, new outputs, ke
 ### Rust budget tests
 
 - Per-file scope assigns the full ceiling independently.
-- Aggregate allocations never exceed the ceiling and never fall below 8 KiB when feasible.
+- Aggregate allocations never exceed the ceiling and never fall below `min(sourceBytes, 8 KiB)` when feasible.
 - A source batch already under the ceiling receives source-sized allocations.
 - Capped water-filling redistributes bytes from small files.
 - Largest-remainder ties are deterministic by selection order.
@@ -354,7 +354,7 @@ Add at least these twelve cases:
 4. Mixed image/video aggregate compression.
 5. Small file capped at source size with its unused allocation redistributed.
 6. Encoder result below allocation increasing later allocations.
-7. Aggregate target below the 8 KiB-per-item minimum.
+7. Aggregate target below the sum of the per-item `min(sourceBytes, 8 KiB)` reserves.
 8. One quality-floor failure among otherwise successful items.
 9. One corrupt file among otherwise successful aggregate items.
 10. Cancellation during an aggregate batch.
