@@ -20,7 +20,7 @@ import { FileQueue } from "./components/FileQueue";
 import { StrategyPicker } from "./components/StrategyPicker";
 import { isBatchConfigurationLocked, primaryActionLabel } from "./domain/batch";
 import { formatBytes } from "./domain/format";
-import { bytesFromCustomLimit, profileById, profiles } from "./domain/profiles";
+import { bytesFromCustomLimit, customRule, profileById, profiles } from "./domain/profiles";
 import { strategyById } from "./domain/strategies";
 import type { CompressionStrategy } from "./domain/types";
 import { useBatchQueue } from "./hooks/useBatchQueue";
@@ -45,7 +45,11 @@ function App() {
       : activeProfile.maxBytes,
     [activeProfile.maxBytes, customUnit, customValue, profileId],
   );
-  const queue = useBatchQueue({ targetBytes, strategy });
+  const queueRule = useMemo(
+    () => profileId === "custom" ? customRule(targetBytes, "perFile") : activeProfile,
+    [activeProfile, profileId, targetBytes],
+  );
+  const queue = useBatchQueue({ rule: queueRule, strategy });
   const selectedStrategy = strategyById(strategy);
   const readyCount = queue.items.filter((item) => item.status === "waiting").length;
   const analyzing = queue.items.some((item) => item.status === "analyzing");

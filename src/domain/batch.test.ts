@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allItemsTerminal, batchTotals, cancelWaitingItems, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
+import { allItemsTerminal, batchTotals, cancelWaitingItems, failWaitingItems, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
 import { batchItem, media, result } from "./batch.test-fixtures";
 
 describe("batch calculations", () => {
@@ -56,5 +56,17 @@ describe("batch calculations", () => {
     expect(isBatchConfigurationLocked([
       batchItem({ status: "noChange", result: result(1_000, "noChange") }),
     ])).toBe(true);
+  });
+
+  it("locks configuration as soon as a budget allocation exists", () => {
+    const item = { ...batchItem("a", 1_000_000), allocationBytes: 700_000 };
+    expect(isBatchConfigurationLocked([item])).toBe(true);
+  });
+
+  it("marks every waiting row failed when the batch budget is infeasible", () => {
+    const items = [batchItem("a", 1_000_000), batchItem("b", 1_000_000)];
+    const next = failWaitingItems(items, "This total limit is too small for the selected file count.");
+    expect(next.map((item) => item.status)).toEqual(["failed", "failed"]);
+    expect(next.every((item) => item.error?.includes("too small"))).toBe(true);
   });
 });

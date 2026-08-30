@@ -42,12 +42,18 @@ export function cancelWaitingItems(items: BatchItem[]): BatchItem[] {
   return items.map((item) => item.status === "waiting" ? { ...item, status: "cancelled" } : item);
 }
 
+export function failWaitingItems(items: BatchItem[], message: string): BatchItem[] {
+  return items.map((item) => item.status === "waiting"
+    ? { ...item, status: "failed", error: message, progress: null }
+    : item);
+}
+
 export function allItemsTerminal(items: BatchItem[]): boolean {
   return items.length > 0 && items.every((item) => isTerminal(item.status));
 }
 
 export function isBatchConfigurationLocked(items: BatchItem[]): boolean {
-  return items.some((item) => item.plan !== null || item.result !== null);
+  return items.some((item) => item.allocationBytes !== null || item.plan !== null || item.result !== null);
 }
 
 export function batchTotals(items: BatchItem[]): BatchTotals {
