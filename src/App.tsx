@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDown,
   Check,
@@ -11,50 +12,86 @@ import {
   HardDrive,
   LoaderCircle,
   LockKeyhole,
+  ExternalLink,
   Sparkles,
   Trash2,
   UploadCloud,
 } from "lucide-react";
 import { BatchSummary } from "./components/BatchSummary";
+import { CustomPlanEditor } from "./components/CustomPlanEditor";
+import { DestinationPicker } from "./components/DestinationPicker";
 import { FileQueue } from "./components/FileQueue";
 import { StrategyPicker } from "./components/StrategyPicker";
 import { isBatchConfigurationLocked, primaryActionLabel } from "./domain/batch";
 import { formatBytes } from "./domain/format";
-import { bytesFromCustomLimit, customRule, profileById, profiles } from "./domain/profiles";
+import {
+  builtInRules,
+  bytesFromCustomLimit,
+  customRule,
+  DISCORD_ATTACHMENTS_URL,
+  DISCORD_CAPS_URL,
+  GMAIL_ATTACHMENTS_URL,
+  OUTLOOK_ATTACHMENTS_URL,
+  ruleById,
+  validateCustomLimit,
+} from "./domain/profiles";
+import { savedPlanToRule } from "./domain/savedPlans";
 import { strategyById } from "./domain/strategies";
-import type { CompressionStrategy } from "./domain/types";
+import type { CompressionStrategy, DestinationRule, LimitScope } from "./domain/types";
 import { useBatchQueue } from "./hooks/useBatchQueue";
+import { useSavedPlans } from "./hooks/useSavedPlans";
 import "./styles.css";
 
 const fileFilters = [
   { name: "Images & videos", extensions: ["jpg", "jpeg", "png", "mp4", "mov", "mkv", "webm"] },
 ];
 
+const MIB = 1024 * 1024;
+const officialSourceUrls = new Set([
+  DISCORD_ATTACHMENTS_URL,
+  DISCORD_CAPS_URL,
+  GMAIL_ATTACHMENTS_URL,
+  OUTLOOK_ATTACHMENTS_URL,
+]);
+
+const ruleDisplayNames: Record<string, string> = {
+  "discord-safe": "Discord Free — Safe",
+  "discord-basic": "Discord Nitro Basic",
+  "discord-nitro": "Discord Nitro",
+  "outlook-internet": "Outlook internet email",
+};
+
+function displayRuleName(rule: DestinationRule) {
+  return ruleDisplayNames[rule.id] ?? rule.name;
+}
+
 function App() {
-  const [profileId, setProfileId] = useState("discord");
+  const [ruleId, setRuleId] = useState("discord-safe");
   const [customValue, setCustomValue] = useState(10);
   const [customUnit, setCustomUnit] = useState<"KB" | "MB">("MB");
+  const [customScope, setCustomScope] = useState<LimitScope>("perFile");
+  const [customName, setCustomName] = useState("");
   const [strategy, setStrategy] = useState<CompressionStrategy>("balanced");
   const [dragActive, setDragActive] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
 
-  const activeProfile = profileById(profileId);
-  const targetBytes = useMemo(
-    () => profileId === "custom"
-      ? bytesFromCustomLimit(customValue, customUnit)
-      : activeProfile.maxBytes,
-    [activeProfile.maxBytes, customUnit, customValue, profileId],
+  const saved = useSavedPlans();
+  const customBytes = useMemo(() => bytesFromCustomLimit(customValue, customUnit), [customUnit, customValue]);
+  const customValidation = useMemo(() => validateCustomLimit(customBytes), [customBytes]);
+  const savedRules = useMemo(() => saved.plans.map(savedPlanToRule), [saved.plans]);
+  const activeRule = useMemo(
+    () => ruleId === "custom"
+      ? customRule(customBytes, customScope)
+      : [...builtInRules, ...savedRules].find((rule) => rule.id === ruleId) ?? ruleById(ruleId),
+    [customBytes, customScope, ruleId, savedRules],
   );
-  const queueRule = useMemo(
-    () => profileId === "custom" ? customRule(targetBytes, "perFile") : activeProfile,
-    [activeProfile, profileId, targetBytes],
-  );
-  const queue = useBatchQueue({ rule: queueRule, strategy });
+  const targetBytes = activeRule.maxBytes;
+  const queue = useBatchQueue({ rule: activeRule, strategy });
   const selectedStrategy = strategyById(strategy);
   const readyCount = queue.items.filter((item) => item.status === "waiting").length;
   const analyzing = queue.items.some((item) => item.status === "analyzing");
   const hasFiles = queue.items.length > 0;
-  const validTarget = targetBytes >= 8 * 1024;
+  const validTarget = activeRule.id !== "custom" || customValidation.valid;
   const configurationLocked = isBatchConfigurationLocked(queue.items);
   const configurationDisabled = queue.running || configurationLocked;
   const batchBadge = !validTarget
@@ -62,6 +99,60 @@ function App() {
     : queue.allTerminal
       ? `${queue.totals.completed + queue.totals.noChange} verified`
       : `${readyCount} to fit`;
+
+  const handleRuleChange = useCallback((rule: DestinationRule) => {
+    if (configurationDisabled) return;
+    saved.clearError();
+    setRuleId(rule.id);
+    if (rule.family === "saved") {
+      const unit = rule.maxBytes >= MIB ? "MB" : "KB";
+      setCustomValue(rule.maxBytes / (unit === "MB" ? MIB : 1024));
+      setCustomUnit(unit);
+      setCustomScope(rule.scope);
+      setCustomName(rule.name);
+    }
+  }, [configurationDisabled, saved.clearError]);
+
+  const openCustomEditor = useCallback(() => {
+    if (configurationDisabled) return;
+    saved.clearError();
+    setRuleId("custom");
+  }, [configurationDisabled, saved.clearError]);
+
+  const updateCustomValue = useCallback((value: number) => {
+    if (configurationDisabled) return;
+    saved.clearError();
+    setRuleId("custom");
+    setCustomValue(value);
+  }, [configurationDisabled, saved.clearError]);
+
+  const updateCustomUnit = useCallback((unit: "KB" | "MB") => {
+    if (configurationDisabled) return;
+    saved.clearError();
+    setRuleId("custom");
+    setCustomUnit(unit);
+  }, [configurationDisabled, saved.clearError]);
+
+  const updateCustomScope = useCallback((scope: LimitScope) => {
+    if (configurationDisabled) return;
+    saved.clearError();
+    setRuleId("custom");
+    setCustomScope(scope);
+  }, [configurationDisabled, saved.clearError]);
+
+  const deleteActiveSavedPlan = useCallback(() => {
+    if (configurationDisabled || activeRule.family !== "saved") return;
+    if (saved.remove(activeRule.id)) setRuleId("discord-safe");
+  }, [activeRule.family, activeRule.id, configurationDisabled, saved.remove]);
+
+  const openRuleSource = useCallback(async () => {
+    if (!activeRule.builtIn || !activeRule.sourceUrl || !officialSourceUrls.has(activeRule.sourceUrl)) return;
+    try {
+      await openUrl(activeRule.sourceUrl);
+    } catch (reason) {
+      setPickerError(`FitSend could not open the official source: ${String(reason)}`);
+    }
+  }, [activeRule.builtIn, activeRule.sourceUrl]);
 
   const addFiles = useCallback(async () => {
     if (!isTauri()) {
@@ -161,13 +252,16 @@ function App() {
               <div className="plan-heading">
                 <div>
                   <span className="section-label">Send plan</span>
-                  <h2>{activeProfile.name} · {selectedStrategy.name}</h2>
+                  <h2>{displayRuleName(activeRule)} · {selectedStrategy.name}</h2>
                 </div>
                 <span className={`quality-badge ${validTarget ? "good" : "warning"}`}>{batchBadge}</span>
               </div>
               <div className="batch-route">
-                <div><span>Destination</span><strong>{activeProfile.shortLabel}</strong></div>
-                <div><span>Limit per file</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
+                <div><span>Destination</span><strong>{activeRule.shortLabel}</strong></div>
+                <div>
+                  <span>{activeRule.scope === "perFile" ? "Limit per file" : "Batch total"}</span>
+                  <strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong>
+                </div>
                 <div><span>Quality rule</span><strong>{selectedStrategy.name}</strong></div>
               </div>
               <p className="safe-note"><Check size={16} /> {selectedStrategy.description}. FitSend measures every accepted file again before marking it ready to send.</p>
@@ -203,7 +297,7 @@ function App() {
           {queue.allTerminal ? (
             <BatchSummary
               totals={queue.totals}
-              destination={activeProfile.id === "custom" ? "your custom limit" : activeProfile.shortLabel}
+              destination={activeRule.id === "custom" ? "your custom limit" : activeRule.shortLabel}
               targetBytes={targetBytes}
             />
           ) : null}
@@ -214,35 +308,35 @@ function App() {
             <span className="step-number">1</span>
             <div><span className="section-label">Destination</span><h2>Where is it going?</h2></div>
           </div>
-          <div className="profiles" role="radiogroup" aria-label="File destination">
-            {profiles.map((profile) => (
-              <button
-                className={`profile-option ${profileId === profile.id ? "selected" : ""}`}
-                type="button"
-                role="radio"
-                aria-checked={profileId === profile.id}
-                key={profile.id}
-                onClick={() => setProfileId(profile.id)}
-                disabled={configurationDisabled}
-              >
-                <span className={`profile-dot ${profile.accent}`} />
-                <span><strong>{profile.name}</strong><small>{profile.description}</small></span>
-                <span className="radio-check">{profileId === profile.id ? <Check size={13} /> : null}</span>
-              </button>
-            ))}
-          </div>
+          <DestinationPicker
+            value={activeRule}
+            savedRules={savedRules}
+            disabled={configurationDisabled}
+            onChange={handleRuleChange}
+            onOpenCustom={openCustomEditor}
+          />
 
-          {profileId === "custom" ? (
-            <div className="custom-limit">
-              <label htmlFor="custom-size">Maximum size for each file</label>
-              <div>
-                <input id="custom-size" type="number" min="0.01" step="0.1" value={customValue} disabled={configurationDisabled} onChange={(event) => setCustomValue(Number(event.target.value))} />
-                <select disabled={configurationDisabled} value={customUnit} onChange={(event) => setCustomUnit(event.target.value as "KB" | "MB")}>
-                  <option>MB</option><option>KB</option>
-                </select>
-              </div>
-              {!validTarget ? <p>Choose at least 8 KB.</p> : null}
-            </div>
+          {activeRule.family === "custom" || activeRule.family === "saved" ? (
+            <CustomPlanEditor
+              value={customValue}
+              unit={customUnit}
+              scope={customScope}
+              name={customName}
+              validation={customValidation}
+              disabled={configurationDisabled}
+              savedPlanError={saved.error}
+              canDelete={activeRule.family === "saved"}
+              onValueChange={updateCustomValue}
+              onUnitChange={updateCustomUnit}
+              onScopeChange={updateCustomScope}
+              onNameChange={(name) => {
+                saved.clearError();
+                setCustomName(name);
+              }}
+              onSave={() => { void saved.save(customName, customScope, customBytes); }}
+              onReplace={() => { void saved.replace(customName, customScope, customBytes); }}
+              onDelete={deleteActiveSavedPlan}
+            />
           ) : null}
 
           <StrategyPicker value={strategy} disabled={configurationDisabled} onChange={setStrategy} />
@@ -252,9 +346,21 @@ function App() {
           ) : null}
 
           <div className="constraint-receipt">
-            <div><span>Destination</span><strong>{activeProfile.shortLabel}</strong></div>
-            <div><span>Per-file limit</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
-            <div><span>Proof before send</span><strong>Size verified</strong></div>
+            <div><span>Scope</span><strong>{activeRule.scope === "perFile" ? "Each file" : "All files together"}</strong></div>
+            <div><span>Working ceiling</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
+            <div><span>Published context</span><strong>{activeRule.publishedLimitLabel}</strong></div>
+          </div>
+          <div className="rule-source">
+            <div>
+              <span className="section-label">Rule source</span>
+              <strong>{activeRule.sourceLabel}</strong>
+              {activeRule.verifiedOn === "2026-08-30" ? <small>Checked 30 Aug 2026</small> : null}
+            </div>
+            {activeRule.builtIn && activeRule.sourceUrl && officialSourceUrls.has(activeRule.sourceUrl) ? (
+              <button className="rule-source-link" type="button" onClick={() => void openRuleSource()} aria-label={`Open official source: ${activeRule.sourceLabel}`}>
+                Source <ExternalLink size={13} />
+              </button>
+            ) : null}
           </div>
           <div className="local-promise"><HardDrive size={17} /><span><strong>Nothing is uploaded.</strong> Originals stay untouched.</span></div>
         </aside>

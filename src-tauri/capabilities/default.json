@@ -7,6 +7,15 @@
     "core:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "opener:allow-reveal-item-in-dir"
+    "opener:allow-reveal-item-in-dir",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://support.discord.com/hc/en-us/articles/25444343291031-File-Attachments-FAQ" },
+        { "url": "https://support.discord.com/hc/en-us/articles/33694251638295-Discord-Account-Caps-Server-Caps-and-More" },
+        { "url": "https://support.google.com/mail/answer/6584" },
+        { "url": "https://support.microsoft.com/en-US/Outlook/reduce-attachment-size-to-send-large-files-with-outlook" }
+      ]
+    }
   ]
 }
