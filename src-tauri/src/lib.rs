@@ -123,9 +123,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             analyze_media,
-            build_plan,
             build_batch_budget,
             rebalance_batch_budget,
+            build_plan,
             process_media,
             cancel_process
         ])
