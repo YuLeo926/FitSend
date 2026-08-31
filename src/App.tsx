@@ -236,7 +236,7 @@ function App() {
                   </button>
                 </div>
               </div>
-              <FileQueue items={queue.items} running={queue.running} onRemove={queue.removeItem} />
+              <FileQueue items={queue.items} limitScope={activeRule.scope} running={queue.running} onRemove={queue.removeItem} />
             </div>
           )}
 
@@ -259,12 +259,14 @@ function App() {
               <div className="batch-route">
                 <div><span>Destination</span><strong>{activeRule.shortLabel}</strong></div>
                 <div>
-                  <span>{activeRule.scope === "perFile" ? "Limit per file" : "Batch total"}</span>
+                  <span>{activeRule.scope === "perFile" ? "Limit for each file" : "Limit for all files"}</span>
                   <strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong>
                 </div>
                 <div><span>Quality rule</span><strong>{selectedStrategy.name}</strong></div>
               </div>
-              <p className="safe-note"><Check size={16} /> {selectedStrategy.description}. FitSend measures every accepted file again before marking it ready to send.</p>
+              <p className="safe-note"><Check size={16} /> {selectedStrategy.description}. {activeRule.scope === "perFile"
+                ? "FitSend checks each accepted file against this limit."
+                : "FitSend checks the total of all accepted files against this limit."}</p>
 
               {queue.running ? (
                 <div className="processing-panel batch-processing">
@@ -289,7 +291,10 @@ function App() {
                   {analyzing ? "Reading selected files…" : primaryActionLabel(readyCount)}
                 </button>
               ) : (
-                <div className="batch-finished-note"><Check size={17} /> Every sendable file in this batch has been verified.</div>
+                <div className={`batch-finished-note ${queue.proof.tone === "success" ? "" : queue.proof.tone}`.trim()}>
+                  {queue.proof.tone === "invalid" ? <CircleAlert size={17} /> : <Check size={17} />}
+                  {queue.proof.headline}.
+                </div>
               )}
             </section>
           ) : null}
@@ -297,8 +302,8 @@ function App() {
           {queue.allTerminal ? (
             <BatchSummary
               totals={queue.totals}
+              proof={queue.proof}
               destination={activeRule.id === "custom" ? "your custom limit" : activeRule.shortLabel}
-              targetBytes={targetBytes}
             />
           ) : null}
         </div>

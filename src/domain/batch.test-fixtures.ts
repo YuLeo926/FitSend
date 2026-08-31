@@ -56,3 +56,29 @@ export function batchItem(
     ...overrides,
   };
 }
+
+export function completedItem(id: string, outputBytes: number): BatchItem {
+  return batchItem({
+    id,
+    status: "completed",
+    result: result(outputBytes, "created"),
+  });
+}
+
+export function noChangeItem(id: string, sourceBytes: number): BatchItem {
+  return batchItem({
+    id,
+    status: "noChange",
+    analysis: media(sourceBytes),
+    result: result(sourceBytes, "noChange"),
+  });
+}
+
+export function failedItem(id: string, sourceBytes: number): BatchItem {
+  return batchItem({
+    id,
+    status: "failed",
+    analysis: media(sourceBytes),
+    error: "Processing failed",
+  });
+}

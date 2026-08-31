@@ -2,9 +2,11 @@ import { Check, CircleAlert, Clipboard, FileImage, FileVideo2, FolderOpen, Loade
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { formatBytes, formatDuration, savedPercent } from "../domain/format";
 import { statusLabel, type BatchItem } from "../domain/batch";
+import type { LimitScope } from "../domain/types";
 
 type Props = {
   items: BatchItem[];
+  limitScope: LimitScope;
   running: boolean;
   onRemove: (id: string) => void;
 };
@@ -13,7 +15,7 @@ function displayName(item: BatchItem): string {
   return item.analysis?.name ?? item.path.replace(/\\/g, "/").split("/").pop() ?? item.path;
 }
 
-export function FileQueue({ items, running, onRemove }: Props) {
+export function FileQueue({ items, limitScope, running, onRemove }: Props) {
   return (
     <section className="file-queue" aria-label="Selected files">
       {items.map((item, index) => {
@@ -42,6 +44,9 @@ export function FileQueue({ items, running, onRemove }: Props) {
                   <span>{analysis.width} × {analysis.height}</span>
                   {analysis.durationSeconds !== null ? <><i /><span>{formatDuration(analysis.durationSeconds)}</span></> : null}
                   <i /><span>{analysis.extension.toUpperCase()}</span>
+                  {limitScope === "batchTotal" && (item.status === "waiting" || item.status === "processing") && item.allocationBytes !== null ? (
+                    <span className="allocation-label">Budget ≤ {formatBytes(item.allocationBytes)}</span>
+                  ) : null}
                 </div>
               ) : <span className="queue-path">{item.path}</span>}
               {item.status === "processing" && item.progress ? (

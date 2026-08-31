@@ -1,4 +1,5 @@
-import type { CompressionPlan, MediaAnalysis, ProcessProgress, ProcessResult } from "./types";
+import { formatBytes } from "./format";
+import type { CompressionPlan, DestinationRule, LimitScope, MediaAnalysis, ProcessProgress, ProcessResult } from "./types";
 
 export type BatchStatus =
   | "analyzing"
@@ -28,8 +29,27 @@ export type BatchTotals = {
   failed: number;
   cancelled: number;
   originalBytes: number;
+  acceptedFiles: number;
+  acceptedBytes: number;
   sendableBytes: number;
   savedBytes: number;
+  limitScope: LimitScope;
+  workingCeilingBytes: number;
+  allSelectedAccepted: boolean;
+  proofValid: boolean;
+};
+
+export type BatchProof = {
+  scope: LimitScope;
+  valid: boolean;
+  allSelectedAccepted: boolean;
+  acceptedFiles: number;
+  acceptedBytes: number;
+  ceilingBytes: number;
+  attentionFiles: number;
+  tone: "success" | "partial" | "invalid";
+  headline: string;
+  detail: string;
 };
 
 const terminalStatuses = new Set<BatchStatus>(["completed", "noChange", "failed", "cancelled"]);
@@ -60,14 +80,105 @@ export function isBatchConfigurationLocked(items: BatchItem[]): boolean {
   return items.some((item) => item.allocationBytes !== null || item.plan !== null || item.result !== null);
 }
 
-export function batchTotals(items: BatchItem[]): BatchTotals {
+function isAcceptedStatus(item: BatchItem): boolean {
+  return item.status === "completed" || item.status === "noChange";
+}
+
+function acceptedByteValue(item: BatchItem): { bytes: number; verifiable: boolean } | null {
+  if (item.status === "completed") {
+    const bytes = item.result?.outputBytes;
+    return {
+      bytes: Number.isFinite(bytes) && (bytes ?? -1) >= 0 ? bytes! : 0,
+      verifiable: item.result?.verified === true && Number.isFinite(bytes) && (bytes ?? -1) >= 0,
+    };
+  }
+  if (item.status === "noChange") {
+    const bytes = item.result?.outputBytes ?? item.analysis?.sizeBytes;
+    return {
+      bytes: Number.isFinite(bytes) && (bytes ?? -1) >= 0 ? bytes! : 0,
+      verifiable: item.result?.verified !== false && Number.isFinite(bytes) && (bytes ?? -1) >= 0,
+    };
+  }
+  return null;
+}
+
+type ProofBasis = {
+  acceptedItems: Array<{ item: BatchItem; bytes: number; verifiable: boolean }>;
+  acceptedBytes: number;
+  allSelectedAccepted: boolean;
+  valid: boolean;
+};
+
+function proofBasis(items: BatchItem[], rule: DestinationRule): ProofBasis {
+  const acceptedItems = items.flatMap((item) => {
+    const value = acceptedByteValue(item);
+    return value ? [{ item, ...value }] : [];
+  });
+  const acceptedBytes = acceptedItems.reduce((sum, accepted) => sum + accepted.bytes, 0);
+  const hasValidCeiling = Number.isFinite(rule.maxBytes) && rule.maxBytes >= 0;
+  const hasVerifiableAcceptedRows = acceptedItems.length > 0 && acceptedItems.every(({ verifiable }) => verifiable);
+  const withinScope = rule.scope === "perFile"
+    ? acceptedItems.every(({ bytes }) => bytes <= rule.maxBytes)
+    : acceptedBytes <= rule.maxBytes;
+  return {
+    acceptedItems,
+    acceptedBytes,
+    allSelectedAccepted: items.length > 0 && items.every(isAcceptedStatus),
+    valid: hasValidCeiling && hasVerifiableAcceptedRows && withinScope,
+  };
+}
+
+function fileCount(count: number): string {
+  return `${count} ${count === 1 ? "file" : "files"}`;
+}
+
+function acceptedFileSubject(count: number): string {
+  return `${count} accepted ${count === 1 ? "file" : "files"}`;
+}
+
+function attentionClause(count: number): string {
+  if (count === 0) return "";
+  return `; ${fileCount(count)} ${count === 1 ? "needs" : "need"} attention`;
+}
+
+export function batchProof(items: BatchItem[], rule: DestinationRule): BatchProof {
+  const basis = proofBasis(items, rule);
+  const acceptedFiles = basis.acceptedItems.length;
+  const attentionFiles = items.length - acceptedFiles;
+  const ceiling = formatBytes(rule.maxBytes);
+  const attention = attentionClause(attentionFiles);
+  const headline = rule.scope === "perFile"
+    ? basis.valid
+      ? `${acceptedFileSubject(acceptedFiles)} ${acceptedFiles === 1 ? "is" : "are each"} under ${ceiling}${attention}`
+      : `${acceptedFileSubject(acceptedFiles)} ${acceptedFiles === 1 ? "could not be verified" : "could not all be verified"} under ${ceiling}${attention}`
+    : basis.valid
+      ? `${acceptedFileSubject(acceptedFiles)} total ${formatBytes(basis.acceptedBytes)} — verified under ${ceiling}${attention}`
+      : `${acceptedFileSubject(acceptedFiles)} total ${formatBytes(basis.acceptedBytes)} — not verified under ${ceiling}${attention}`;
+  const tone = !basis.valid ? "invalid" : basis.allSelectedAccepted ? "success" : "partial";
+  const detail = tone === "success"
+    ? "All selected files are covered by this proof. Originals remain untouched."
+    : tone === "partial"
+      ? "Only the accepted files are covered by this proof. Files needing attention are not included."
+      : "The accepted output does not satisfy the selected limit. Do not treat this batch as ready to send.";
+  return {
+    scope: rule.scope,
+    valid: basis.valid,
+    allSelectedAccepted: basis.allSelectedAccepted,
+    acceptedFiles,
+    acceptedBytes: basis.acceptedBytes,
+    ceilingBytes: rule.maxBytes,
+    attentionFiles,
+    tone,
+    headline,
+    detail,
+  };
+}
+
+export function batchTotals(items: BatchItem[], rule: DestinationRule): BatchTotals {
+  const basis = proofBasis(items, rule);
   const originalBytes = items.reduce((sum, item) => sum + (item.analysis?.sizeBytes ?? 0), 0);
-  const sendableBytes = items.reduce((sum, item) => {
-    if (item.status !== "completed" && item.status !== "noChange") return sum;
-    return sum + (item.result?.outputBytes ?? item.analysis?.sizeBytes ?? 0);
-  }, 0);
   const successfulOriginalBytes = items.reduce((sum, item) => {
-    if (item.status !== "completed" && item.status !== "noChange") return sum;
+    if (!isAcceptedStatus(item)) return sum;
     return sum + (item.analysis?.sizeBytes ?? 0);
   }, 0);
   return {
@@ -77,8 +188,14 @@ export function batchTotals(items: BatchItem[]): BatchTotals {
     failed: items.filter((item) => item.status === "failed").length,
     cancelled: items.filter((item) => item.status === "cancelled").length,
     originalBytes,
-    sendableBytes,
-    savedBytes: Math.max(0, successfulOriginalBytes - sendableBytes),
+    acceptedFiles: basis.acceptedItems.length,
+    acceptedBytes: basis.acceptedBytes,
+    sendableBytes: basis.acceptedBytes,
+    savedBytes: Math.max(0, successfulOriginalBytes - basis.acceptedBytes),
+    limitScope: rule.scope,
+    workingCeilingBytes: rule.maxBytes,
+    allSelectedAccepted: basis.allSelectedAccepted,
+    proofValid: basis.valid,
   };
 }
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { allItemsTerminal, batchTotals, cancelWaitingItems, failWaitingItems, isBatchAnalysisComplete, overallProgress, pathKey, type BatchItem } from "../domain/batch";
+import { allItemsTerminal, batchProof, batchTotals, cancelWaitingItems, failWaitingItems, isBatchAnalysisComplete, overallProgress, pathKey, type BatchItem } from "../domain/batch";
 import { applyBudgetAllocations, budgetRequest } from "../domain/budget";
 import { outputDefaultPath } from "../domain/format";
 import type { BatchBudget, CompressionPlan, CompressionStrategy, DestinationRule, MediaAnalysis, ProcessProgress, ProcessResult } from "../domain/types";
@@ -243,7 +243,8 @@ export function useBatchQueue({ rule, strategy }: UseBatchQueueOptions) {
     }
   }, []);
 
-  const totals = useMemo(() => batchTotals(items), [items]);
+  const totals = useMemo(() => batchTotals(items, rule), [items, rule]);
+  const proof = useMemo(() => batchProof(items, rule), [items, rule]);
   const progress = useMemo(() => overallProgress(items), [items]);
   const hasRunnable = items.some((item) => item.status === "waiting");
   const allTerminal = allItemsTerminal(items);
@@ -252,6 +253,7 @@ export function useBatchQueue({ rule, strategy }: UseBatchQueueOptions) {
     items,
     running,
     totals,
+    proof,
     progress,
     hasRunnable,
     allTerminal,

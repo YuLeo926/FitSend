@@ -134,6 +134,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .file-identity { min-width: 0; }.file-identity strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 4px 0 7px; font-size: 15px; }
 .file-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: var(--muted); font-size: 11.5px; }
 .file-facts i { width: 3px; height: 3px; border-radius: 50%; background: #aaa79f; }
+.allocation-label { margin-left: 2px; padding: 2px 6px; border: 1px solid #cfcbc0; border-radius: 999px; color: #706d65; background: #f5f3ed; font-size: 9.5px; font-weight: 650; }
 
 .queue-shell { overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--paper); box-shadow: var(--shadow); }
 .queue-header { padding: 18px 20px; display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--line); background: linear-gradient(110deg, #fffdf8, #f8f6ef); }
@@ -182,6 +183,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .operation-line, .safe-note { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
 .operation-line svg { color: var(--blue); flex: 0 0 auto; }.safe-note svg { color: var(--green); flex: 0 0 auto; }
 .batch-finished-note { display: flex; align-items: center; gap: 9px; min-height: 48px; margin-top: 18px; padding: 0 15px; border: 1px solid rgba(42, 123, 93, .25); border-radius: 12px; color: var(--green); background: rgba(239, 249, 244, .72); font-size: 13px; font-weight: 700; }
+.batch-finished-note.partial { border-color: #d8ba76; color: #735318; background: #fff7df; }
+.batch-finished-note.invalid { border-color: #e4b3a9; color: #914335; background: #fff2ed; }
 .warnings { margin: 14px 0; }.warnings p { display: flex; align-items: flex-start; gap: 8px; margin: 7px 0; color: #914335; font-size: 12px; line-height: 1.4; }.warnings svg { flex: 0 0 auto; margin-top: 1px; }
 .plan-skeleton { margin-top: 24px; display: grid; gap: 10px; }.plan-skeleton span { display: block; height: 13px; border-radius: 8px; background: #ece9e2; animation: breathe 1.2s infinite alternate; }.plan-skeleton span:nth-child(2) { width: 82%; }.plan-skeleton span:nth-child(3) { width: 64%; }
 .plan-error { margin-top: 22px; min-height: 62px; padding: 15px; border-radius: 12px; display: flex; align-items: center; gap: 9px; color: #914335; background: #fff2ed; font-size: 12.5px; }
@@ -214,9 +217,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .result-comparison strong { display: block; font-size: 12px; line-height: 1.35; }
 .success-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .batch-summary { border: 1px solid #aed0c3; border-radius: 20px; padding: 23px; display: flex; gap: 15px; background: linear-gradient(135deg, #fffdf8, #eff8f4); box-shadow: var(--shadow); }
+.batch-summary.partial { border-color: #d8ba76; background: linear-gradient(135deg, #fffdf8, #fff7df); }
+.batch-summary.invalid { border-color: #e4b3a9; background: linear-gradient(135deg, #fffdf8, #fff2ed); }
 .summary-mark { width: 46px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 14px; color: white; background: var(--green); }
+.summary-mark.partial { background: #9a6b18; }
+.summary-mark.invalid { background: var(--coral-dark); }
 .batch-summary > div { min-width: 0; flex: 1; }.batch-summary h2 { margin: 4px 0 5px; color: var(--green); font-size: 19px; }
+.batch-summary.partial h2 { color: #735318; }.batch-summary.invalid h2 { color: #914335; }
 .summary-proof { margin: 0 0 14px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.proof-invalid { color: #7c4036; font-weight: 650; }
 .summary-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .summary-metrics span { min-width: 0; padding: 11px; border: 1px solid #d8e6df; border-radius: 11px; background: rgba(255, 255, 255, .62); }
 .summary-metrics small, .summary-metrics strong { display: block; }.summary-metrics small { margin-bottom: 5px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; font-weight: 720; }.summary-metrics strong { font-size: 11px; line-height: 1.35; }
