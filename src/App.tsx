@@ -22,7 +22,7 @@ import { CustomPlanEditor } from "./components/CustomPlanEditor";
 import { DestinationPicker } from "./components/DestinationPicker";
 import { FileQueue } from "./components/FileQueue";
 import { StrategyPicker } from "./components/StrategyPicker";
-import { isBatchConfigurationLocked, primaryActionLabel } from "./domain/batch";
+import { batchBadgeState, isBatchConfigurationLocked, primaryActionLabel } from "./domain/batch";
 import { formatBytes } from "./domain/format";
 import {
   builtInRules,
@@ -94,11 +94,7 @@ function App() {
   const validTarget = activeRule.id !== "custom" || customValidation.valid;
   const configurationLocked = isBatchConfigurationLocked(queue.items);
   const configurationDisabled = queue.running || configurationLocked;
-  const batchBadge = !validTarget
-    ? "Check limit"
-    : queue.allTerminal
-      ? `${queue.totals.completed + queue.totals.noChange} verified`
-      : `${readyCount} to fit`;
+  const batchBadge = batchBadgeState(queue.proof, validTarget, queue.allTerminal, readyCount);
 
   const handleRuleChange = useCallback((rule: DestinationRule) => {
     if (configurationDisabled) return;
@@ -236,7 +232,7 @@ function App() {
                   </button>
                 </div>
               </div>
-              <FileQueue items={queue.items} limitScope={activeRule.scope} running={queue.running} onRemove={queue.removeItem} />
+              <FileQueue items={queue.items} limitScope={activeRule.scope} proof={queue.proof} running={queue.running} onRemove={queue.removeItem} />
             </div>
           )}
 
@@ -254,7 +250,7 @@ function App() {
                   <span className="section-label">Send plan</span>
                   <h2>{displayRuleName(activeRule)} · {selectedStrategy.name}</h2>
                 </div>
-                <span className={`quality-badge ${validTarget ? "good" : "warning"}`}>{batchBadge}</span>
+                <span className={`quality-badge ${batchBadge.tone}`}>{batchBadge.text}</span>
               </div>
               <div className="batch-route">
                 <div><span>Destination</span><strong>{activeRule.shortLabel}</strong></div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allItemsTerminal, batchProof, batchTotals, cancelWaitingItems, failWaitingItems, isBatchAnalysisComplete, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
+import { allItemsTerminal, batchBadgeState, batchProof, batchTotals, cancelWaitingItems, failWaitingItems, isBatchAnalysisComplete, isBatchConfigurationLocked, overallProgress, pathKey, primaryActionLabel, statusLabel } from "./batch";
 import { batchItem, completedItem, failedItem, media, noChangeItem, result } from "./batch.test-fixtures";
 import { ruleById } from "./profiles";
 
@@ -181,5 +181,21 @@ describe("batch calculations", () => {
       expect(totals.acceptedBytes).toBe(proof.acceptedBytes);
       expect(totals.sendableBytes).toBe(totals.acceptedBytes);
     }
+  });
+
+  it("derives terminal badge copy and tone from proof state", () => {
+    const rule = ruleById("gmail-personal");
+    expect(batchBadgeState(batchProof([completedItem("a", 9_000_000)], rule), true, true, 0)).toEqual({
+      text: "1 verified",
+      tone: "good",
+    });
+    expect(batchBadgeState(batchProof([completedItem("a", 9_000_000), failedItem("b", 2_000_000)], rule), true, true, 0)).toEqual({
+      text: "1 accepted",
+      tone: "partial",
+    });
+    expect(batchBadgeState(batchProof([completedItem("a", 13_000_000), completedItem("b", 13_000_000)], rule), true, true, 0)).toEqual({
+      text: "Verification failed",
+      tone: "invalid",
+    });
   });
 });

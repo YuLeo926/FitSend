@@ -52,6 +52,11 @@ export type BatchProof = {
   detail: string;
 };
 
+export type BatchBadgeState = {
+  text: string;
+  tone: "good" | "partial" | "invalid" | "warning";
+};
+
 const terminalStatuses = new Set<BatchStatus>(["completed", "noChange", "failed", "cancelled"]);
 
 export function isTerminal(status: BatchStatus): boolean {
@@ -197,6 +202,19 @@ export function batchTotals(items: BatchItem[], rule: DestinationRule): BatchTot
     allSelectedAccepted: basis.allSelectedAccepted,
     proofValid: basis.valid,
   };
+}
+
+export function batchBadgeState(
+  proof: BatchProof,
+  validTarget: boolean,
+  allTerminal: boolean,
+  readyCount: number,
+): BatchBadgeState {
+  if (!validTarget) return { text: "Check limit", tone: "warning" };
+  if (!allTerminal) return { text: `${readyCount} to fit`, tone: "good" };
+  if (proof.tone === "success") return { text: `${proof.acceptedFiles} verified`, tone: "good" };
+  if (proof.tone === "partial") return { text: `${proof.acceptedFiles} accepted`, tone: "partial" };
+  return { text: "Verification failed", tone: "invalid" };
 }
 
 export function overallProgress(items: BatchItem[]): number {
