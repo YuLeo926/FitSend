@@ -1,5 +1,6 @@
 import { Save, Trash2 } from "lucide-react";
 import type { LimitScope } from "../domain/types";
+import { handleRadioArrowNavigation } from "./radioNavigation";
 
 const COLLISION_ERROR = "A saved plan with this name already exists.";
 
@@ -87,8 +88,30 @@ export function CustomPlanEditor({
 
       <span className="custom-limit-label" id="scope-label">Limit applies to</span>
       <div className="scope-toggle" role="radiogroup" aria-labelledby="scope-label">
-        <button type="button" role="radio" aria-checked={scope === "perFile"} className={scope === "perFile" ? "selected" : ""} disabled={disabled} onClick={() => onScopeChange("perFile")}>Each file</button>
-        <button type="button" role="radio" aria-checked={scope === "batchTotal"} className={scope === "batchTotal" ? "selected" : ""} disabled={disabled} onClick={() => onScopeChange("batchTotal")}>All files together</button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={scope === "perFile"}
+          tabIndex={scope === "perFile" ? 0 : -1}
+          className={scope === "perFile" ? "selected" : ""}
+          disabled={disabled}
+          onClick={() => onScopeChange("perFile")}
+          onKeyDown={handleRadioArrowNavigation}
+        >
+          Each file
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={scope === "batchTotal"}
+          tabIndex={scope === "batchTotal" ? 0 : -1}
+          className={scope === "batchTotal" ? "selected" : ""}
+          disabled={disabled}
+          onClick={() => onScopeChange("batchTotal")}
+          onKeyDown={handleRadioArrowNavigation}
+        >
+          All files together
+        </button>
       </div>
 
       <label className="custom-limit-label" htmlFor="custom-plan-name">Save for next time</label>

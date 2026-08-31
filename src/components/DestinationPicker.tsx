@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { builtInRules, ruleById, scopeLabel } from "../domain/profiles";
 import { formatBytes } from "../domain/format";
 import type { DestinationFamily, DestinationRule } from "../domain/types";
+import { handleRadioArrowNavigation } from "./radioNavigation";
 
 type Props = {
   value: DestinationRule;
@@ -33,9 +34,9 @@ function ruleScopeLabel(rule: DestinationRule) {
 }
 
 export function DestinationPicker({ value, savedRules, disabled, onChange, onOpenCustom }: Props) {
-  const lastSelected = useRef<Partial<Record<DestinationFamily, DestinationRule>>>({});
+  const lastSelectedIds = useRef<Partial<Record<DestinationFamily, string>>>({});
   if (value.family === "discord" || value.family === "email" || value.family === "saved") {
-    lastSelected.current[value.family] = value;
+    lastSelectedIds.current[value.family] = value.id;
   }
 
   const families = savedRules.length > 0
@@ -51,17 +52,14 @@ export function DestinationPicker({ value, savedRules, disabled, onChange, onOpe
       onChange(ruleById("web-5mb"));
       return;
     }
-    const fallback = family === "discord"
-      ? ruleById("discord-safe")
-      : family === "email"
-        ? ruleById("gmail-personal")
-        : savedRules[0];
-    const remembered = lastSelected.current[family];
-    if (remembered && (family !== "saved" || savedRules.some((rule) => rule.id === remembered.id))) {
-      onChange(remembered);
-    } else if (fallback) {
-      onChange(fallback);
-    }
+    const availableRules = family === "saved"
+      ? savedRules
+      : builtInRules.filter((rule) => rule.family === family);
+    const defaultId = family === "discord" ? "discord-safe" : family === "email" ? "gmail-personal" : undefined;
+    const remembered = availableRules.find((rule) => rule.id === lastSelectedIds.current[family]);
+    const fallback = availableRules.find((rule) => rule.id === defaultId) ?? availableRules[0];
+    const nextRule = remembered ?? fallback;
+    if (nextRule) onChange(nextRule);
   };
 
   const visibleTiers = value.family === "discord" || value.family === "email"
@@ -81,9 +79,11 @@ export function DestinationPicker({ value, savedRules, disabled, onChange, onOpe
               type="button"
               role="radio"
               aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
               disabled={disabled}
               key={family.id}
               onClick={() => selectFamily(family.id)}
+              onKeyDown={handleRadioArrowNavigation}
             >
               {family.label}
             </button>
@@ -101,9 +101,11 @@ export function DestinationPicker({ value, savedRules, disabled, onChange, onOpe
                 type="button"
                 role="radio"
                 aria-checked={selected}
+                tabIndex={selected ? 0 : -1}
                 disabled={disabled}
                 key={rule.id}
                 onClick={() => onChange(rule)}
+                onKeyDown={handleRadioArrowNavigation}
               >
                 <span className="provider-tier-copy">
                   <strong>{tierLabels[rule.id] ?? rule.name}</strong>
