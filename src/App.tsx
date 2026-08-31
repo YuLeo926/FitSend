@@ -367,7 +367,7 @@ function App() {
         </aside>
       </section>
 
-      <footer><span>FitSend 0.2.1</span><span>Fits the limit · Protects quality · Verifies locally</span></footer>
+      <footer><span>FitSend 0.3.0</span><span>Fits the limit · Protects quality · Verifies locally</span></footer>
     </main>
   );
 }

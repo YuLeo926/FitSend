@@ -2,24 +2,49 @@
 
 **Make every file ready to send.**
 
-FitSend is a local-first desktop utility built around one promise: choose where an image or video is going, then get a verified copy under that destination's per-file limit without crossing a conservative visual-quality floor.
+FitSend 0.3.0 is a local-first Windows desktop utility for making image and video copies fit a real send plan. A plan defines both a byte ceiling and its scope: **Per file** proves every accepted file independently, while **All files together** proves the sum of the accepted files. FitSend never uploads media and never overwrites an original.
 
-## Choose the limit and the strategy
+## Choose a destination plan
 
-FitSend uses two independent choices:
+The six built-in rules were reviewed on **2026-08-30**. Provider limits are static information shipped with this release; FitSend does not contact providers or silently update them.
 
-- **Destination:** Discord, email attachment, web upload, or an exact custom KB/MB ceiling. FitSend treats that destination as a concrete per-file acceptance rule.
-- **Quality guardrail:** **Precise fit** uses the most quality that still fits; **Balanced** keeps the file looking original and only accepts a worthwhile saving; **Smallest acceptable** searches for the smallest result without crossing its visual-quality floor.
+| Built-in rule | FitSend working ceiling | Scope | Source status on 2026-08-30 |
+|---|---:|---|---|
+| Discord Free — Safe | 9.8 MiB | Per file | Conservative working limit informed by Discord's current account-cap and attachment documentation |
+| Discord Nitro Basic | 49 MiB | Per file | Below Discord's published 50 MB attachment limit |
+| Discord Nitro | 490 MiB | Per file | Below Discord's published 500 MB attachment limit |
+| Gmail personal | 24 MiB | All files together | Below Gmail's documented 25 MB total-attachment limit |
+| Outlook internet email | 18 MiB | All files together | Leaves room below the common 20 MB whole-message limit |
+| Web upload | 5 MiB | Per file | FitSend's generic conservative default, not a provider guarantee |
 
-You can select or drop several JPG, PNG, MP4, MOV, MKV, and WebM files together. Mixed image/video batches run one file at a time to keep memory and CPU use predictable. A damaged or unsupported file is reported on its own row and does not stop later files.
+**Discord Safe** is intentionally named conservatively: Discord currently documents different free-account values in its account-cap material and attachment FAQ. It is not a claim that every Discord account has one universal 10 MB cap. Use a custom per-file plan when you know the exact limit for your account or server.
 
-Each row shows whether the file already fits or which verified copy is ready to send. The final summary proves the accepted files are under the selected limit and reports the original total, verified total, bytes saved, created results, unchanged originals, and failures.
+The Gmail rule is for personal Gmail's documented total attachments. Workspace administrators can apply different limits. The Outlook rule is for internet email and accounts for the whole message, not just raw attachments; Exchange administrators can configure different limits. Organizational users should use a custom plan based on their actual policy.
 
-Once processing begins, the destination and quality rule stay attached to that batch so its verification claim cannot be changed after the fact. Clear the batch before choosing a different send plan.
+Custom plans accept an exact KB or MB ceiling, from 8 KiB through 10 GiB, and either scope. A custom plan can be saved locally, reloaded after restart, explicitly replaced, or deleted while the batch is unlocked. Saved plans remain only in the local WebView profile; they are not accounts, synced preferences, or provider rules.
+
+## Choose a quality guardrail
+
+- **Precise fit** uses the most quality that still fits.
+- **Balanced** keeps the file looking original and only accepts a worthwhile saving.
+- **Smallest acceptable** searches for the smallest result without crossing its visual-quality floor.
+
+You can select or drop several JPG, PNG, MP4, MOV, MKV, and WebM files together. Mixed image/video batches run sequentially to keep memory and CPU use predictable. A damaged, unsupported, cancelled, or quality-floor file is marked as needing attention without invalidating good outputs.
+
+For an all-files-together plan, FitSend allocates the remaining byte budget to waiting files. After each accepted result it uses that file's **actual verified size** to redistribute unused space forward. It never goes back to re-encode an earlier file, and a later saving does not retry an earlier quality-floor failure.
+
+The final receipt distinguishes complete and partial proof:
+
+- Per-file proof says every accepted file is at or below the plan ceiling.
+- Aggregate proof says the accepted files' actual combined bytes are at or below the total ceiling.
+- Partial proof still verifies the accepted files, excludes failed or cancelled files from the byte sum, and clearly reports how many files need attention. It never implies every selected file is ready.
+
+Once processing begins, the destination and quality rule stay attached to that batch. Clear the batch before choosing another send plan.
 
 ## Output and privacy behavior
 
-- Originals are never overwritten and nothing is uploaded.
+- Media analysis, compression, and verification happen locally. Nothing is uploaded.
+- Originals remain byte-identical and are never overwritten.
 - New results are saved beside their source with an automatic `.fitsend` name. Existing names get a numbered suffix instead of being replaced.
 - Precise fit creates no duplicate when the source already fits.
 - Balanced can keep the source when recompression would save too little or miss its quality floor.
@@ -41,45 +66,37 @@ npm install
 npm run tauri dev
 ```
 
-FitSend is a desktop application. Opening the Vite URL directly in a web browser only previews the interface; browser pages cannot access the native file picker or the local media engine.
+FitSend is a desktop application. Opening the Vite URL directly in a web browser only previews the interface; browser pages cannot access the native file picker or local media engine.
 
-Images work without FFmpeg. Bundled Windows releases include FFmpeg and FFprobe, so end users do not need to install them. Development builds prefer tools bundled beside the application and fall back to `PATH`; if neither is available, FitSend explains that video processing is unavailable instead of failing silently.
+Images work without FFmpeg. Bundled Windows releases include FFmpeg and FFprobe, so end users do not need a separate FFmpeg installation. Development builds prefer tools bundled beside the application and fall back to `PATH`; if neither is available, FitSend explains that video processing is unavailable.
 
 ## Quality checks
 
 ```powershell
 npm test
 npm run build
+cargo test -p fitsend-core --manifest-path src-tauri/Cargo.toml
+cargo test --all-targets --manifest-path src-tauri/Cargo.toml
+cargo clippy --workspace --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 npm run test:acceptance
-cd src-tauri
-cargo test
 ```
 
-The media engine is an independent Rust crate, so it can be verified without launching the desktop shell:
+The 68-row real-media acceptance report preserves the original 56 strategy, media, corruption, collision, cancellation, and cleanup scenarios and adds 12 batch scenarios. Those cover image, video, and mixed aggregate totals; source caps; forward redistribution; impossible reserves; quality-floor, corrupt, partial, and cancellation behavior; and the per-file Discord regression. Reports in `output/acceptance` include structured batch scope, ceiling, allocations, accepted and attention counts, and actual accepted bytes.
 
-```powershell
-cd src-tauri
-cargo test -p fitsend-core
-```
-
-The acceptance command generates a strategy/media matrix covering below-limit, slightly-over, far-over, and infeasible targets for all three strategies. It also covers the 1254×1254 regression, transparency, rotated video metadata, audio/no-audio, WebM/MKV inputs, Unicode and spaced paths, corruption, cancellation, output-name collisions, and output-write failure cleanup. Reports include strategy, outcome, quality score, dimensions, sizes, target, and processing time in `output/acceptance`.
-
-## Build a Windows installer
+## Build Windows packages
 
 ```powershell
 npm run bundle:windows
 ```
 
-The build stages the locally installed FFmpeg distribution, rejects builds marked `--enable-nonfree`, includes its license and precise build metadata, then produces MSI, NSIS, and portable ZIP releases. Set `FITSEND_FFMPEG_SOURCE_DIR` to an extracted distribution root when the tools are not on `PATH`.
+The build stages the project's configured FFmpeg distribution, rejects builds marked `--enable-nonfree`, preserves its license and exact build metadata, then creates MSI, NSIS, and portable ZIP artifacts plus `SHA256SUMS.txt`. The portable archive contains FitSend, FFmpeg, FFprobe, the FFmpeg license, the distribution notice, and revision metadata.
 
-The local preview currently uses the GPL v3 Gyan.dev Essentials build because FitSend calls its separate `ffmpeg.exe` and `ffprobe.exe` programs for H.264/AAC processing. Before publishing a download, provide the complete corresponding FFmpeg source for the exact bundled revision at the same download location and review all applicable external-library obligations. See `src-tauri/resources/ffmpeg/FITSEND-FFMPEG-NOTICE.txt`. This is a distribution checkpoint, not legal advice.
+The bundled GPL v3 Gyan.dev Essentials build is invoked as separate `ffmpeg.exe` and `ffprobe.exe` programs for H.264/AAC processing. Before publishing a download, provide the complete corresponding FFmpeg source for the exact bundled revision at the same download location and review all applicable external-library obligations. See `src-tauri/resources/ffmpeg/FITSEND-FFMPEG-NOTICE.txt`. This is a distribution checkpoint, not legal advice.
 
-The release remains unsigned during early development, so Windows may show its standard warning for an unknown publisher.
+FitSend 0.3.0 installers are unsigned. Windows SmartScreen or antivirus software may warn about an unknown publisher.
 
 ## How fitting works
 
 Images are tested across multiple quality and, when appropriate, resolution candidates. Precise searches from quality 100 downward; Balanced favors full resolution and enforces a stricter similarity floor; Smallest searches more aggressively while staying above its visual floor. Transparent pixels are preserved instead of flattened.
 
-Videos use a duration-aware bitrate budget with a safety margin. FitSend performs two-pass encoding, measures the output, and can correct the bitrate. Balanced and Smallest also compare the encoded frames against the source before accepting them. Targets that would require unusably low video data are rejected early.
-
-The source file is always left untouched. If an output name already exists, FitSend creates a numbered copy.
+Videos use a duration-aware bitrate budget with a safety margin. FitSend performs two-pass encoding, measures the output, and can correct the bitrate. Balanced and Smallest also compare encoded frames against the source before accepting them. Targets that would require unusably low video data are rejected early.

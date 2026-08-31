@@ -1,13 +1,18 @@
 use std::{
+    collections::hash_map::DefaultHasher,
     fs,
+    hash::{Hash, Hasher},
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use fitsend_core::{
-    analyze, build, process, process_with_progress, CompressionStrategy, MediaKind, PlanRequest,
-    ProcessOutcome, ProcessRequest, PROCESS_CANCELLED,
+    analyze, build, build_budget, process, process_with_progress, rebalance_budget,
+    AcceptedBudgetItem, BatchBudget, BatchBudgetRequest, BudgetItemRequest, CompressionStrategy,
+    ItemAllocation, LimitScope, MediaAnalysis, MediaKind, PlanRequest, ProcessOutcome,
+    ProcessRequest, ProcessResult, MIN_ITEM_BUDGET_BYTES, PROCESS_CANCELLED,
 };
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 use serde::Serialize;
@@ -29,6 +34,25 @@ struct CaseResult {
     quality_score: Option<f64>,
     width: Option<u32>,
     height: Option<u32>,
+    batch: Option<BatchCaseMetrics>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchCaseMetrics {
+    scope: LimitScope,
+    ceiling_bytes: u64,
+    allocation_bytes: Vec<u64>,
+    accepted_files: usize,
+    attention_files: usize,
+    accepted_bytes: u64,
+}
+
+struct AggregateCaseResult {
+    results: Vec<Result<ProcessResult, String>>,
+    allocations: Vec<ItemAllocation>,
+    accepted_bytes: u64,
+    ceiling_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -61,6 +85,7 @@ fn main() {
     run_video_cases(&fixtures, &outputs, &mut cases);
     run_strategy_matrix(&fixtures, &outputs, &mut cases);
     run_failure_cases(&fixtures, &outputs, &mut cases);
+    run_batch_cases(&fixtures, &outputs, &mut cases);
 
     let passed = cases.iter().filter(|case| case.passed).count();
     let report = AcceptanceReport {
@@ -460,6 +485,7 @@ fn run_strategy_matrix(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResu
             quality_score: None,
             width: None,
             height: None,
+            batch: None,
         });
     }
 
@@ -578,6 +604,7 @@ fn run_expected_infeasible_plan(
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     }
 }
 
@@ -625,6 +652,7 @@ fn run_expected_processing_failure(
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     }
 }
 
@@ -705,6 +733,7 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     });
 
     let video = fixtures.join("infeasible-video.mp4");
@@ -737,6 +766,7 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
             quality_score: None,
             width: None,
             height: None,
+            batch: None,
         });
     }
 
@@ -778,6 +808,7 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     });
 
     if video.exists() {
@@ -820,8 +851,949 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
             quality_score: None,
             width: None,
             height: None,
+            batch: None,
         });
     }
+}
+
+fn run_aggregate_batch(
+    inputs: &[PathBuf],
+    outputs: &Path,
+    ceiling_bytes: u64,
+    strategy: CompressionStrategy,
+) -> AggregateCaseResult {
+    fs::create_dir_all(outputs).expect("aggregate output directory should be created");
+    let original_hashes = inputs
+        .iter()
+        .map(|path| file_hash(path).expect("aggregate input should be readable"))
+        .collect::<Vec<_>>();
+    let analyses = inputs
+        .iter()
+        .map(|path| analyze(path.to_str().unwrap()).unwrap())
+        .collect::<Vec<_>>();
+    let ids = (0..analyses.len())
+        .map(|index| format!("aggregate-{index}"))
+        .collect::<Vec<_>>();
+    let mut accepted: Vec<AcceptedBudgetItem> = Vec::new();
+    let mut allocations =
+        build_budget(&budget_request(&ids, &analyses, ceiling_bytes, &accepted)).unwrap();
+    assert!(allocations.feasible, "aggregate fixture budget should be feasible");
+    let mut applied_allocations = Vec::new();
+    let mut results = Vec::new();
+    for (index, analysis) in analyses.iter().enumerate() {
+        let id = &ids[index];
+        let target = allocations
+            .allocations
+            .iter()
+            .find(|entry| &entry.id == id)
+            .unwrap()
+            .target_bytes;
+        applied_allocations.push(ItemAllocation {
+            id: id.clone(),
+            target_bytes: target,
+        });
+        let result = process(&ProcessRequest {
+            output_path: aggregate_output_path(outputs, id, analysis)
+                .to_string_lossy()
+                .to_string(),
+            analysis: analysis.clone(),
+            target_bytes: target,
+            strategy,
+        });
+        if let Ok(ref completed) = result {
+            assert!(
+                analyze(&completed.output_path).is_ok(),
+                "every accepted aggregate output should open"
+            );
+            accepted.push(AcceptedBudgetItem {
+                id: id.clone(),
+                actual_bytes: completed.output_bytes,
+            });
+        }
+        results.push(result);
+        if index + 1 < analyses.len() {
+            let request = remaining_budget_request(
+                &ids,
+                &analyses,
+                &accepted,
+                index + 1,
+                ceiling_bytes,
+                &allocations,
+            );
+            allocations = rebalance_budget(&request).unwrap();
+            assert!(
+                allocations.feasible,
+                "forward aggregate fixture budget should remain feasible"
+            );
+        }
+    }
+    for (path, before) in inputs.iter().zip(original_hashes) {
+        assert_eq!(
+            file_hash(path).expect("aggregate input should remain readable"),
+            before,
+            "aggregate processing must not alter originals"
+        );
+    }
+    AggregateCaseResult {
+        accepted_bytes: accepted.iter().map(|entry| entry.actual_bytes).sum(),
+        allocations: applied_allocations,
+        results,
+        ceiling_bytes,
+    }
+}
+
+fn aggregate_output_path(outputs: &Path, id: &str, analysis: &MediaAnalysis) -> PathBuf {
+    let extension = match &analysis.kind {
+        MediaKind::Video => "mp4",
+        MediaKind::Image if analysis.has_alpha => "png",
+        MediaKind::Image => "jpg",
+    };
+    outputs.join(format!("{id}.{extension}"))
+}
+
+fn budget_request(
+    ids: &[String],
+    analyses: &[MediaAnalysis],
+    ceiling_bytes: u64,
+    accepted: &[AcceptedBudgetItem],
+) -> BatchBudgetRequest {
+    BatchBudgetRequest {
+        scope: LimitScope::BatchTotal,
+        ceiling_bytes,
+        items: ids
+            .iter()
+            .zip(analyses)
+            .map(|(id, analysis)| BudgetItemRequest {
+                id: id.clone(),
+                source_bytes: analysis.size_bytes,
+                minimum_allocation_bytes: None,
+            })
+            .collect(),
+        accepted: accepted.to_vec(),
+    }
+}
+
+fn remaining_budget_request(
+    ids: &[String],
+    analyses: &[MediaAnalysis],
+    accepted: &[AcceptedBudgetItem],
+    start_index: usize,
+    ceiling_bytes: u64,
+    previous: &BatchBudget,
+) -> BatchBudgetRequest {
+    BatchBudgetRequest {
+        scope: LimitScope::BatchTotal,
+        ceiling_bytes,
+        items: ids
+            .iter()
+            .zip(analyses)
+            .enumerate()
+            .skip(start_index)
+            .map(|(_, (id, analysis))| BudgetItemRequest {
+                id: id.clone(),
+                source_bytes: analysis.size_bytes,
+                minimum_allocation_bytes: Some(
+                    previous
+                        .allocations
+                        .iter()
+                        .find(|allocation| allocation.id == *id)
+                        .expect("waiting item should retain its previous allocation")
+                        .target_bytes,
+                ),
+            })
+            .collect(),
+        accepted: accepted.to_vec(),
+    }
+}
+
+fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>) {
+    const MIB: u64 = 1024 * 1024;
+    const GMAIL_CEILING: u64 = 24 * MIB;
+
+    let batch_fixtures = fixtures.join("batch");
+    let batch_outputs = outputs.join("batch");
+    fs::create_dir_all(&batch_fixtures).unwrap();
+    fs::create_dir_all(&batch_outputs).unwrap();
+
+    let under_inputs = [
+        batch_fixtures.join("gmail-under-one.jpg"),
+        batch_fixtures.join("gmail-under-two.png"),
+    ];
+    generate_image(&under_inputs[0], 640, 480, false, 301).unwrap();
+    generate_image(&under_inputs[1], 720, 480, false, 302).unwrap();
+    let under = run_aggregate_batch(
+        &under_inputs,
+        &batch_outputs.join("gmail-under"),
+        GMAIL_CEILING,
+        CompressionStrategy::Precise,
+    );
+    let under_ok = under.results.iter().all(Result::is_ok)
+        && under.accepted_bytes <= under.ceiling_bytes
+        && under.results.iter().all(|result| {
+            result
+                .as_ref()
+                .is_ok_and(|completed| completed.outcome == ProcessOutcome::NoChange)
+        });
+    cases.push(batch_case(
+        "Images already under Gmail total",
+        under_ok,
+        "all unchanged images are accepted under the Gmail aggregate ceiling",
+        format!(
+            "actual accepted bytes={} <= {}; every item stayed unchanged={}",
+            under.accepted_bytes,
+            under.ceiling_bytes,
+            under_ok
+        ),
+        CompressionStrategy::Precise,
+        LimitScope::BatchTotal,
+        &under,
+        0,
+    ));
+
+    let image_over_inputs = [
+        batch_fixtures.join("gmail-over-one.jpg"),
+        batch_fixtures.join("gmail-over-two.jpg"),
+        batch_fixtures.join("gmail-over-three.jpg"),
+    ];
+    for (index, path) in image_over_inputs.iter().enumerate() {
+        generate_image(path, 1280, 800, false, 311 + index as u32).unwrap();
+        pad_file_to_size(path, 9 * MIB).unwrap();
+    }
+    let image_source_total = source_total(&image_over_inputs);
+    let image_over = run_aggregate_batch(
+        &image_over_inputs,
+        &batch_outputs.join("gmail-image-over"),
+        GMAIL_CEILING,
+        CompressionStrategy::Precise,
+    );
+    let image_over_ok = image_source_total > GMAIL_CEILING
+        && image_over.results.iter().all(Result::is_ok)
+        && image_over.accepted_bytes <= GMAIL_CEILING;
+    cases.push(batch_case(
+        "Images over Gmail total",
+        image_over_ok,
+        "compressed image outputs use actual accepted bytes under the Gmail total",
+        format!(
+            "source total={image_source_total}; actual accepted total={}",
+            image_over.accepted_bytes
+        ),
+        CompressionStrategy::Precise,
+        LimitScope::BatchTotal,
+        &image_over,
+        0,
+    ));
+
+    let video_over_inputs = [
+        batch_fixtures.join("gmail-video-one.mp4"),
+        batch_fixtures.join("gmail-video-two.mp4"),
+        batch_fixtures.join("gmail-video-three.mp4"),
+    ];
+    if fitsend_core::video_tools_available() {
+        for (index, path) in video_over_inputs.iter().enumerate() {
+            generate_video(path, 640 + index as u32 * 32, 360, 2.0, index != 1).unwrap();
+            pad_file_to_size(path, 9 * MIB).unwrap();
+        }
+        let video_source_total = source_total(&video_over_inputs);
+        let video_over = run_aggregate_batch(
+            &video_over_inputs,
+            &batch_outputs.join("gmail-video-over"),
+            GMAIL_CEILING,
+            CompressionStrategy::Precise,
+        );
+        let video_over_ok = video_source_total > GMAIL_CEILING
+            && video_over.results.iter().all(Result::is_ok)
+            && video_over.accepted_bytes <= GMAIL_CEILING;
+        cases.push(batch_case(
+            "Videos over Gmail total",
+            video_over_ok,
+            "compressed video outputs use actual accepted bytes under the Gmail total",
+            format!(
+                "source total={video_source_total}; actual accepted total={}",
+                video_over.accepted_bytes
+            ),
+            CompressionStrategy::Precise,
+            LimitScope::BatchTotal,
+            &video_over,
+            0,
+        ));
+    } else {
+        cases.push(failed_batch_case(
+            "Videos over Gmail total",
+            GMAIL_CEILING,
+            "bundled FFmpeg tools are required for aggregate video acceptance",
+            3,
+        ));
+    }
+
+    if fitsend_core::video_tools_available() {
+        let mixed_inputs = [
+            batch_fixtures.join("mixed-image.jpg"),
+            batch_fixtures.join("mixed-video.mp4"),
+        ];
+        generate_image(&mixed_inputs[0], 1280, 800, false, 321).unwrap();
+        generate_video(&mixed_inputs[1], 640, 360, 2.0, true).unwrap();
+        for path in &mixed_inputs {
+            pad_file_to_size(path, 2 * MIB).unwrap();
+        }
+        let mixed_ceiling = 3 * MIB;
+        let mixed = run_aggregate_batch(
+            &mixed_inputs,
+            &batch_outputs.join("mixed"),
+            mixed_ceiling,
+            CompressionStrategy::Precise,
+        );
+        let kinds = mixed
+            .results
+            .iter()
+            .filter_map(|result| result.as_ref().ok())
+            .map(|result| analyze(&result.output_path).unwrap().kind)
+            .collect::<Vec<_>>();
+        let mixed_ok = source_total(&mixed_inputs) > mixed_ceiling
+            && mixed.results.iter().all(Result::is_ok)
+            && mixed.accepted_bytes <= mixed_ceiling
+            && kinds.contains(&MediaKind::Image)
+            && kinds.contains(&MediaKind::Video);
+        cases.push(batch_case(
+            "Mixed image/video total",
+            mixed_ok,
+            "mixed media outputs are accepted using their actual combined size",
+            format!(
+                "actual accepted total={}; output kinds={kinds:?}",
+                mixed.accepted_bytes
+            ),
+            CompressionStrategy::Precise,
+            LimitScope::BatchTotal,
+            &mixed,
+            0,
+        ));
+    } else {
+        cases.push(failed_batch_case(
+            "Mixed image/video total",
+            3 * MIB,
+            "bundled FFmpeg tools are required for mixed aggregate acceptance",
+            2,
+        ));
+    }
+
+    let cap_inputs = [
+        batch_fixtures.join("source-cap-small.jpg"),
+        batch_fixtures.join("source-cap-large-one.jpg"),
+        batch_fixtures.join("source-cap-large-two.jpg"),
+    ];
+    generate_image(&cap_inputs[0], 48, 48, false, 331).unwrap();
+    pad_file_to_size(&cap_inputs[0], MIN_ITEM_BUDGET_BYTES).unwrap();
+    for (index, path) in cap_inputs[1..].iter().enumerate() {
+        generate_image(path, 1280, 800, false, 332 + index as u32).unwrap();
+        pad_file_to_size(path, 2 * MIB).unwrap();
+    }
+    let cap_analyses = analyze_paths(&cap_inputs);
+    let cap_ids = aggregate_ids(cap_inputs.len());
+    let cap_ceiling = 3 * MIB;
+    let initial_cap = build_budget(&budget_request(
+        &cap_ids,
+        &cap_analyses,
+        cap_ceiling,
+        &[],
+    ))
+    .unwrap();
+    let cap = run_aggregate_batch(
+        &cap_inputs,
+        &batch_outputs.join("source-cap"),
+        cap_ceiling,
+        CompressionStrategy::Precise,
+    );
+    let small_source = cap_analyses[0].size_bytes;
+    let cap_ok = initial_cap.feasible
+        && initial_cap.allocations[0].target_bytes == small_source
+        && initial_cap
+            .allocations
+            .iter()
+            .map(|allocation| allocation.target_bytes)
+            .sum::<u64>()
+            == cap_ceiling
+        && cap.results.iter().all(Result::is_ok)
+        && cap.accepted_bytes <= cap_ceiling;
+    cases.push(batch_case(
+        "Small source cap redistribution",
+        cap_ok,
+        "a small source is capped at its own size and unused budget moves to larger files",
+        format!(
+            "small source={small_source}; initial allocations={:?}; actual accepted={}",
+            allocation_values(&initial_cap.allocations),
+            cap.accepted_bytes
+        ),
+        CompressionStrategy::Precise,
+        LimitScope::BatchTotal,
+        &cap,
+        0,
+    ));
+
+    let forward_inputs = [
+        batch_fixtures.join("forward-one.jpg"),
+        batch_fixtures.join("forward-two.jpg"),
+        batch_fixtures.join("forward-three.jpg"),
+    ];
+    for (index, path) in forward_inputs.iter().enumerate() {
+        generate_image(path, 1280, 800, false, 341 + index as u32).unwrap();
+        pad_file_to_size(path, 2 * MIB).unwrap();
+    }
+    let forward_analyses = analyze_paths(&forward_inputs);
+    let forward_ids = aggregate_ids(forward_inputs.len());
+    let forward_ceiling = 3 * MIB;
+    let initial_forward = build_budget(&budget_request(
+        &forward_ids,
+        &forward_analyses,
+        forward_ceiling,
+        &[],
+    ))
+    .unwrap();
+    let forward = run_aggregate_batch(
+        &forward_inputs,
+        &batch_outputs.join("forward"),
+        forward_ceiling,
+        CompressionStrategy::Precise,
+    );
+    let forward_ok = forward.results.iter().all(Result::is_ok)
+        && forward.accepted_bytes <= forward_ceiling
+        && forward.results[0]
+            .as_ref()
+            .is_ok_and(|result| result.output_bytes < forward.allocations[0].target_bytes)
+        && forward.allocations[1].target_bytes
+            > initial_forward.allocations[1].target_bytes;
+    cases.push(batch_case(
+        "Actual-under-allocation forward redistribution",
+        forward_ok,
+        "an encoder result below its allocation increases a later file's target",
+        format!(
+            "initial second={}; applied second={}; first actual={}; actual accepted={}",
+            initial_forward.allocations[1].target_bytes,
+            forward.allocations[1].target_bytes,
+            forward.results[0]
+                .as_ref()
+                .map(|result| result.output_bytes)
+                .unwrap_or(0),
+            forward.accepted_bytes
+        ),
+        CompressionStrategy::Precise,
+        LimitScope::BatchTotal,
+        &forward,
+        0,
+    ));
+
+    let reserve_inputs = [
+        batch_fixtures.join("reserve-one.jpg"),
+        batch_fixtures.join("reserve-two.jpg"),
+        batch_fixtures.join("reserve-three.jpg"),
+    ];
+    for (index, path) in reserve_inputs.iter().enumerate() {
+        generate_image(path, 64, 64, false, 351 + index as u32).unwrap();
+    }
+    let reserve_analyses = analyze_paths(&reserve_inputs);
+    let reserve_ids = aggregate_ids(reserve_inputs.len());
+    let reserve_sum = reserve_analyses
+        .iter()
+        .map(|analysis| analysis.size_bytes.min(MIN_ITEM_BUDGET_BYTES))
+        .sum::<u64>();
+    let reserve_ceiling = reserve_sum - 1;
+    let reserve_budget = build_budget(&budget_request(
+        &reserve_ids,
+        &reserve_analyses,
+        reserve_ceiling,
+        &[],
+    ))
+    .unwrap();
+    let reserve_ok = !reserve_budget.feasible
+        && reserve_budget.allocations.is_empty()
+        && reserve_budget.reason.as_deref()
+            == Some("This total limit is too small for the selected file count.");
+    cases.push(batch_case_from_metrics(
+        "Impossible sum of per-item reserves",
+        reserve_ok,
+        "the aggregate fails before processing when per-item reserves exceed the ceiling",
+        format!(
+            "reserve sum={reserve_sum}; ceiling={reserve_ceiling}; reason={}",
+            reserve_budget.reason.as_deref().unwrap_or("none")
+        ),
+        CompressionStrategy::Precise,
+        BatchCaseMetrics {
+            scope: LimitScope::BatchTotal,
+            ceiling_bytes: reserve_ceiling,
+            allocation_bytes: Vec::new(),
+            accepted_files: 0,
+            attention_files: reserve_inputs.len(),
+            accepted_bytes: 0,
+        },
+    ));
+
+    let quality_inputs = [
+        batch_fixtures.join("quality-floor-large.png"),
+        batch_fixtures.join("quality-floor-small.jpg"),
+    ];
+    generate_image(&quality_inputs[0], 1200, 800, false, 361).unwrap();
+    generate_image(&quality_inputs[1], 48, 48, false, 362).unwrap();
+    pad_file_to_size(&quality_inputs[1], 16 * 1024).unwrap();
+    let quality_large_bytes = fs::metadata(&quality_inputs[0]).unwrap().len();
+    let quality_target = (quality_large_bytes.saturating_mul(20) / 100).max(80 * 1024);
+    let quality_ceiling = quality_target + fs::metadata(&quality_inputs[1]).unwrap().len();
+    let quality = run_aggregate_batch(
+        &quality_inputs,
+        &batch_outputs.join("quality-floor"),
+        quality_ceiling,
+        CompressionStrategy::Balanced,
+    );
+    let quality_errors = quality
+        .results
+        .iter()
+        .filter_map(|result| result.as_ref().err())
+        .collect::<Vec<_>>();
+    let quality_ok = quality.results.iter().filter(|result| result.is_ok()).count() == 1
+        && quality_errors.len() == 1
+        && quality_errors[0].to_ascii_lowercase().contains("quality floor")
+        && quality.accepted_bytes <= quality_ceiling;
+    cases.push(batch_case(
+        "One quality-floor failure",
+        quality_ok,
+        "one item fails safely at its quality floor while valid accepted bytes remain proved",
+        format!(
+            "error={}; actual accepted total={}",
+            quality_errors.first().map_or("none", |error| error.as_str()),
+            quality.accepted_bytes
+        ),
+        CompressionStrategy::Balanced,
+        LimitScope::BatchTotal,
+        &quality,
+        0,
+    ));
+
+    let corrupt_inputs = [
+        batch_fixtures.join("corrupt-good-one.jpg"),
+        batch_fixtures.join("corrupt-selected.mp4"),
+        batch_fixtures.join("corrupt-good-two.png"),
+    ];
+    generate_image(&corrupt_inputs[0], 640, 480, false, 371).unwrap();
+    fs::write(&corrupt_inputs[1], b"not actually a video").unwrap();
+    generate_image(&corrupt_inputs[2], 640, 480, false, 372).unwrap();
+    let source_hashes = corrupt_inputs
+        .iter()
+        .map(|path| file_hash(path).unwrap())
+        .collect::<Vec<_>>();
+    let analyzed = corrupt_inputs
+        .iter()
+        .map(|path| analyze(path.to_string_lossy().as_ref()))
+        .collect::<Vec<_>>();
+    let corrupt_attention = analyzed.iter().filter(|result| result.is_err()).count();
+    let valid_corrupt_inputs = corrupt_inputs
+        .iter()
+        .zip(&analyzed)
+        .filter_map(|(path, result)| result.is_ok().then_some(path.clone()))
+        .collect::<Vec<_>>();
+    let corrupt = run_aggregate_batch(
+        &valid_corrupt_inputs,
+        &batch_outputs.join("corrupt"),
+        GMAIL_CEILING,
+        CompressionStrategy::Precise,
+    );
+    let corrupt_ok = corrupt_attention == 1
+        && corrupt.results.iter().all(Result::is_ok)
+        && corrupt.accepted_bytes <= GMAIL_CEILING
+        && corrupt_inputs
+            .iter()
+            .zip(source_hashes)
+            .all(|(path, before)| file_hash(path).ok() == Some(before));
+    cases.push(batch_case(
+        "One corrupt input",
+        corrupt_ok,
+        "corrupt analysis is attention and only valid media enters the aggregate queue",
+        format!(
+            "analysis attention={corrupt_attention}; valid accepted total={}",
+            corrupt.accepted_bytes
+        ),
+        CompressionStrategy::Precise,
+        LimitScope::BatchTotal,
+        &corrupt,
+        corrupt_attention,
+    ));
+
+    if fitsend_core::video_tools_available() {
+        cases.push(run_aggregate_cancellation_case(
+            &batch_fixtures,
+            &batch_outputs,
+        ));
+    } else {
+        cases.push(failed_batch_case(
+            "Cancellation during aggregate video processing",
+            3 * MIB,
+            "bundled FFmpeg tools are required for aggregate cancellation acceptance",
+            3,
+        ));
+    }
+
+    let partial_inputs = [
+        batch_fixtures.join("partial-quality-failure.png"),
+        batch_fixtures.join("partial-good.jpg"),
+    ];
+    generate_image(&partial_inputs[0], 1200, 800, false, 381).unwrap();
+    generate_image(&partial_inputs[1], 48, 48, false, 382).unwrap();
+    pad_file_to_size(&partial_inputs[1], 16 * 1024).unwrap();
+    let partial_failed_source = fs::metadata(&partial_inputs[0]).unwrap().len();
+    let partial_target = (partial_failed_source.saturating_mul(20) / 100).max(80 * 1024);
+    let partial_ceiling = fs::metadata(&partial_inputs[1]).unwrap().len() + partial_target;
+    let partial = run_aggregate_batch(
+        &partial_inputs,
+        &batch_outputs.join("partial"),
+        partial_ceiling,
+        CompressionStrategy::Balanced,
+    );
+    let successful_bytes = partial
+        .results
+        .iter()
+        .filter_map(|result| result.as_ref().ok())
+        .map(|result| result.output_bytes)
+        .sum::<u64>();
+    let partial_ok = partial.results.iter().filter(|result| result.is_ok()).count() == 1
+        && partial.results.iter().filter(|result| result.is_err()).count() == 1
+        && partial.accepted_bytes == successful_bytes
+        && partial.accepted_bytes <= partial_ceiling
+        && partial.accepted_bytes + partial_failed_source > partial.accepted_bytes;
+    cases.push(batch_case(
+        "Partial proof excluding failed bytes",
+        partial_ok,
+        "partial aggregate proof sums only accepted output bytes",
+        format!(
+            "accepted metric={}; successful output sum={successful_bytes}; excluded failed source={partial_failed_source}",
+            partial.accepted_bytes
+        ),
+        CompressionStrategy::Balanced,
+        LimitScope::BatchTotal,
+        &partial,
+        0,
+    ));
+
+    let per_file_inputs = [
+        batch_fixtures.join("discord-per-file-one.jpg"),
+        batch_fixtures.join("discord-per-file-two.jpg"),
+    ];
+    for (index, path) in per_file_inputs.iter().enumerate() {
+        generate_image(path, 1280, 800, false, 391 + index as u32).unwrap();
+        pad_file_to_size(path, 6 * MIB).unwrap();
+    }
+    cases.push(run_per_file_regression(
+        &per_file_inputs,
+        &batch_outputs.join("per-file"),
+    ));
+}
+
+fn run_aggregate_cancellation_case(fixtures: &Path, outputs: &Path) -> CaseResult {
+    const MIB: u64 = 1024 * 1024;
+    let inputs = [
+        fixtures.join("cancel-accepted-first.jpg"),
+        fixtures.join("cancel-active-video.mp4"),
+        fixtures.join("cancel-later-image.jpg"),
+    ];
+    generate_image(&inputs[0], 48, 48, false, 401).unwrap();
+    pad_file_to_size(&inputs[0], 16 * 1024).unwrap();
+    generate_video(&inputs[1], 960, 540, 4.0, true).unwrap();
+    pad_file_to_size(&inputs[1], 4 * MIB).unwrap();
+    generate_image(&inputs[2], 96, 96, false, 402).unwrap();
+    pad_file_to_size(&inputs[2], 16 * 1024).unwrap();
+    fs::create_dir_all(outputs.join("cancellation")).unwrap();
+
+    let original_hashes = inputs
+        .iter()
+        .map(|path| file_hash(path).unwrap())
+        .collect::<Vec<_>>();
+    let analyses = analyze_paths(&inputs);
+    let ids = aggregate_ids(inputs.len());
+    let ceiling = 3 * MIB;
+    let mut budget = build_budget(&budget_request(&ids, &analyses, ceiling, &[])).unwrap();
+    let first_target = budget.allocations[0].target_bytes;
+    let first = process(&ProcessRequest {
+        analysis: analyses[0].clone(),
+        target_bytes: first_target,
+        output_path: aggregate_output_path(&outputs.join("cancellation"), &ids[0], &analyses[0])
+            .to_string_lossy()
+            .to_string(),
+        strategy: CompressionStrategy::Precise,
+    })
+    .unwrap();
+    assert!(analyze(&first.output_path).is_ok());
+    let accepted = vec![AcceptedBudgetItem {
+        id: ids[0].clone(),
+        actual_bytes: first.output_bytes,
+    }];
+    budget = rebalance_budget(&remaining_budget_request(
+        &ids,
+        &analyses,
+        &accepted,
+        1,
+        ceiling,
+        &budget,
+    ))
+    .unwrap();
+    let active_target = budget.allocations[0].target_bytes;
+    let later_target = budget.allocations[1].target_bytes;
+    let active_output = aggregate_output_path(
+        &outputs.join("cancellation"),
+        &ids[1],
+        &analyses[1],
+    );
+    let later_output = aggregate_output_path(
+        &outputs.join("cancellation"),
+        &ids[2],
+        &analyses[2],
+    );
+    let mut encoding_began = false;
+    let cancelled = process_with_progress(
+        &ProcessRequest {
+            analysis: analyses[1].clone(),
+            target_bytes: active_target,
+            output_path: active_output.to_string_lossy().to_string(),
+            strategy: CompressionStrategy::Precise,
+        },
+        |progress| {
+            if progress.stage.starts_with("Encoding pass") {
+                encoding_began = true;
+                false
+            } else {
+                true
+            }
+        },
+    );
+    let error = cancelled.err();
+    let sources_unchanged = inputs
+        .iter()
+        .zip(original_hashes)
+        .all(|(path, before)| file_hash(path).ok() == Some(before));
+    let clean = !active_output.exists()
+        && !later_output.exists()
+        && !contains_processing_residue(&outputs.join("cancellation"));
+    let passed = encoding_began
+        && error.as_deref() == Some(PROCESS_CANCELLED)
+        && sources_unchanged
+        && clean
+        && first.output_bytes <= ceiling;
+    batch_case_from_metrics(
+        "Cancellation during aggregate video processing",
+        passed,
+        "active video cancellation returns PROCESS_CANCELLED and later rows remain unprocessed",
+        format!(
+            "encodingBegan={encoding_began}; error={}; acceptedBeforeCancel={}; laterCancelled=1; sourcesUnchanged={sources_unchanged}; clean={clean}",
+            error.as_deref().unwrap_or("none"),
+            first.output_bytes
+        ),
+        CompressionStrategy::Precise,
+        BatchCaseMetrics {
+            scope: LimitScope::BatchTotal,
+            ceiling_bytes: ceiling,
+            allocation_bytes: vec![first_target, active_target, later_target],
+            accepted_files: 1,
+            attention_files: 2,
+            accepted_bytes: first.output_bytes,
+        },
+    )
+}
+
+fn run_per_file_regression(inputs: &[PathBuf], outputs: &Path) -> CaseResult {
+    const DISCORD_SAFE_CEILING: u64 = 10_276_044;
+    fs::create_dir_all(outputs).unwrap();
+    let original_hashes = inputs
+        .iter()
+        .map(|path| file_hash(path).unwrap())
+        .collect::<Vec<_>>();
+    let analyses = inputs
+        .iter()
+        .map(|path| analyze(path.to_string_lossy().as_ref()).unwrap())
+        .collect::<Vec<_>>();
+    let results = analyses
+        .iter()
+        .enumerate()
+        .map(|(index, analysis)| {
+            process(&ProcessRequest {
+                analysis: analysis.clone(),
+                target_bytes: DISCORD_SAFE_CEILING,
+                output_path: aggregate_output_path(
+                    outputs,
+                    &format!("per-file-{index}"),
+                    analysis,
+                )
+                .to_string_lossy()
+                .to_string(),
+                strategy: CompressionStrategy::Precise,
+            })
+        })
+        .collect::<Vec<_>>();
+    let accepted_bytes = results
+        .iter()
+        .filter_map(|result| result.as_ref().ok())
+        .map(|result| result.output_bytes)
+        .sum::<u64>();
+    let originals_unchanged = inputs
+        .iter()
+        .zip(original_hashes)
+        .all(|(path, before)| file_hash(path).ok() == Some(before));
+    let passed = results.iter().all(|result| {
+        result.as_ref().is_ok_and(|completed| {
+            completed.verified
+                && completed.output_bytes <= DISCORD_SAFE_CEILING
+                && analyze(&completed.output_path).is_ok()
+        })
+    }) && accepted_bytes > DISCORD_SAFE_CEILING
+        && originals_unchanged;
+    batch_case_from_metrics(
+        "Discord per-file regression",
+        passed,
+        "each accepted file independently fits Discord Safe even when their sum exceeds one ceiling",
+        format!(
+            "accepted total={accepted_bytes} > per-file ceiling={DISCORD_SAFE_CEILING}; originalsUnchanged={originals_unchanged}"
+        ),
+        CompressionStrategy::Precise,
+        BatchCaseMetrics {
+            scope: LimitScope::PerFile,
+            ceiling_bytes: DISCORD_SAFE_CEILING,
+            allocation_bytes: vec![DISCORD_SAFE_CEILING; inputs.len()],
+            accepted_files: results.iter().filter(|result| result.is_ok()).count(),
+            attention_files: results.iter().filter(|result| result.is_err()).count(),
+            accepted_bytes,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn batch_case(
+    name: &str,
+    passed: bool,
+    expected: &str,
+    detail: String,
+    strategy: CompressionStrategy,
+    scope: LimitScope,
+    result: &AggregateCaseResult,
+    extra_attention: usize,
+) -> CaseResult {
+    let accepted_files = result.results.iter().filter(|entry| entry.is_ok()).count();
+    let attention_files = result.results.len() - accepted_files + extra_attention;
+    batch_case_from_metrics(
+        name,
+        passed,
+        expected,
+        detail,
+        strategy,
+        BatchCaseMetrics {
+            scope,
+            ceiling_bytes: result.ceiling_bytes,
+            allocation_bytes: allocation_values(&result.allocations),
+            accepted_files,
+            attention_files,
+            accepted_bytes: result.accepted_bytes,
+        },
+    )
+}
+
+fn batch_case_from_metrics(
+    name: &str,
+    passed: bool,
+    expected: &str,
+    detail: String,
+    strategy: CompressionStrategy,
+    metrics: BatchCaseMetrics,
+) -> CaseResult {
+    let scope_proof = metrics.scope != LimitScope::BatchTotal
+        || metrics.accepted_bytes <= metrics.ceiling_bytes;
+    CaseResult {
+        name: name.to_string(),
+        category: "batch".to_string(),
+        strategy: Some(strategy),
+        outcome: None,
+        passed: passed && scope_proof,
+        expected: expected.to_string(),
+        detail: format!("{detail}; scopeProof={scope_proof}"),
+        input_bytes: None,
+        output_bytes: None,
+        target_bytes: None,
+        duration_ms: None,
+        quality_score: None,
+        width: None,
+        height: None,
+        batch: Some(metrics),
+    }
+}
+
+fn failed_batch_case(
+    name: &str,
+    ceiling_bytes: u64,
+    detail: &str,
+    attention_files: usize,
+) -> CaseResult {
+    batch_case_from_metrics(
+        name,
+        false,
+        "batch fixture generation and processing succeed",
+        detail.to_string(),
+        CompressionStrategy::Precise,
+        BatchCaseMetrics {
+            scope: LimitScope::BatchTotal,
+            ceiling_bytes,
+            allocation_bytes: Vec::new(),
+            accepted_files: 0,
+            attention_files,
+            accepted_bytes: 0,
+        },
+    )
+}
+
+fn analyze_paths<const N: usize>(paths: &[PathBuf; N]) -> Vec<MediaAnalysis> {
+    paths
+        .iter()
+        .map(|path| analyze(path.to_string_lossy().as_ref()).unwrap())
+        .collect()
+}
+
+fn aggregate_ids(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|index| format!("aggregate-{index}"))
+        .collect()
+}
+
+fn allocation_values(allocations: &[ItemAllocation]) -> Vec<u64> {
+    allocations
+        .iter()
+        .map(|allocation| allocation.target_bytes)
+        .collect()
+}
+
+fn source_total<const N: usize>(paths: &[PathBuf; N]) -> u64 {
+    paths
+        .iter()
+        .map(|path| fs::metadata(path).unwrap().len())
+        .sum()
+}
+
+fn pad_file_to_size(path: &Path, target_size: u64) -> Result<(), String> {
+    let current = fs::metadata(path)
+        .map_err(|error| format!("could not inspect padding target: {error}"))?
+        .len();
+    if current >= target_size {
+        return Ok(());
+    }
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|error| format!("could not open padding target: {error}"))?;
+    let zeros = [0_u8; 64 * 1024];
+    let mut remaining = target_size - current;
+    while remaining > 0 {
+        let length = remaining.min(zeros.len() as u64) as usize;
+        file.write_all(&zeros[..length])
+            .map_err(|error| format!("could not pad media fixture: {error}"))?;
+        remaining -= length as u64;
+    }
+    Ok(())
+}
+
+fn file_hash(path: &Path) -> Result<u64, String> {
+    let bytes = fs::read(path).map_err(|error| format!("could not hash source: {error}"))?;
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Ok(hasher.finish())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -982,6 +1954,7 @@ fn run_success_case(
         quality_score: result.quality_score,
         width: Some(result.width),
         height: Some(result.height),
+        batch: None,
     }
 }
 
@@ -1006,6 +1979,7 @@ fn run_expected_analysis_failure(name: &str, input: &Path, expected_text: &str) 
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     }
 }
 
@@ -1117,6 +2091,7 @@ fn failed_generation(name: &str, category: &str, error: String) -> CaseResult {
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     }
 }
 
@@ -1174,17 +2149,56 @@ fn failed_case(
         quality_score: None,
         width: None,
         height: None,
+        batch: None,
     }
 }
 
 fn markdown_report(report: &AcceptanceReport) -> String {
     let mut markdown = format!(
-        "# FitSend Acceptance Report\n\n- Total: {}\n- Passed: {}\n- Failed: {}\n\n| Case | Category | Strategy | Result | Outcome | Bytes (input → output / target) | Quality | Dimensions | Time | Detail |\n|---|---|---|---:|---|---|---:|---|---:|---|\n",
+        "# FitSend Acceptance Report\n\n- Total: {}\n- Passed: {}\n- Failed: {}\n\n| Case | Category | Strategy | Result | Outcome | Bytes (input → output / target) | Quality | Dimensions | Time | Scope | Ceiling | Allocations | Accepted | Attention | Accepted total | Detail |\n|---|---|---|---:|---|---|---:|---|---:|---|---:|---|---:|---:|---:|---|\n",
         report.total, report.passed, report.failed
     );
     for case in &report.cases {
+        let scope = case
+            .batch
+            .as_ref()
+            .map(|batch| format!("{:?}", batch.scope))
+            .unwrap_or_else(|| "—".to_string());
+        let ceiling = case
+            .batch
+            .as_ref()
+            .map(|batch| batch.ceiling_bytes.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let allocations = case
+            .batch
+            .as_ref()
+            .map(|batch| {
+                batch
+                    .allocation_bytes
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "—".to_string());
+        let accepted = case
+            .batch
+            .as_ref()
+            .map(|batch| batch.accepted_files.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let attention = case
+            .batch
+            .as_ref()
+            .map(|batch| batch.attention_files.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let accepted_total = case
+            .batch
+            .as_ref()
+            .map(|batch| batch.accepted_bytes.to_string())
+            .unwrap_or_else(|| "—".to_string());
         markdown.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} → {} / {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} → {} / {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             case.name,
             case.category,
             case.strategy
@@ -1213,6 +2227,12 @@ fn markdown_report(report: &AcceptanceReport) -> String {
             case.duration_ms
                 .map(|value| format!("{value} ms"))
                 .unwrap_or_else(|| "—".to_string()),
+            scope,
+            ceiling,
+            allocations,
+            accepted,
+            attention,
+            accepted_total,
             case.detail.replace('|', "\\|").replace('\n', " ")
         ));
     }
