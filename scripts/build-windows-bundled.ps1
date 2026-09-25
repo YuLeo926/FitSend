@@ -3,8 +3,25 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $projectRoot = Split-Path -Parent $PSScriptRoot
+
+function Get-ReleaseHash {
+    param([string]$Path)
+
+    try {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    } catch [System.Management.Automation.CommandNotFoundException] {
+        # Some Windows PowerShell hosts lose module command discovery after Tauri's build tools run.
+        $stream = [System.IO.File]::OpenRead($Path)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [System.BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+            $stream.Dispose()
+        }
+    }
+}
 
 & (Join-Path $PSScriptRoot "stage-ffmpeg.ps1")
 
@@ -59,12 +76,10 @@ try {
             throw "Expected a non-empty release artifact: $artifact"
         }
     }
-    $checksumLines = $artifacts |
-        Sort-Object { [System.IO.Path]::GetFileName($_) } |
-        ForEach-Object {
-            $hash = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $([System.IO.Path]::GetFileName($_))"
-        }
+    $checksumLines = foreach ($artifact in ($artifacts | Sort-Object { [System.IO.Path]::GetFileName($_) })) {
+        $hash = Get-ReleaseHash $artifact
+        "$hash  $([System.IO.Path]::GetFileName($artifact))"
+    }
     $checksumPath = Join-Path $releaseDirectory "SHA256SUMS.txt"
     if (Test-Path -LiteralPath $checksumPath) {
         Remove-Item -LiteralPath $checksumPath -Force
