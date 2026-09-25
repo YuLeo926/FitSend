@@ -21,7 +21,7 @@ The six built-in rules were reviewed on **2026-08-30**. Provider limits are stat
 
 The Gmail rule is for personal Gmail's documented total attachments. Workspace administrators can apply different limits. The Outlook rule is for internet email and accounts for the whole message, not just raw attachments; Exchange administrators can configure different limits. Organizational users should use a custom plan based on their actual policy.
 
-Custom plans accept an exact KB or MB ceiling, from 8 KiB through 10 GiB, and either scope. A custom plan can be saved locally, reloaded after restart, explicitly replaced, or deleted while the batch is unlocked. Saved plans remain only in the local WebView profile; they are not accounts, synced preferences, or provider rules.
+Custom plans accept an exact KB or MB ceiling, from 8 KiB through 10 GiB, and either scope. Up to 20 custom plans can be saved locally, reloaded after restart, explicitly replaced, or deleted while the batch is unlocked. Saved plans remain only in the local WebView profile; they are not accounts, synced preferences, or provider rules.
 
 ## Choose a quality guardrail
 

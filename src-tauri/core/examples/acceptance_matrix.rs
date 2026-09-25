@@ -856,6 +856,18 @@ fn run_failure_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult
     }
 }
 
+fn contains_nonempty_working_file(path: &Path) -> bool {
+    fs::read_dir(path).ok().is_some_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".fitsend-working-")
+                && entry.metadata().is_ok_and(|metadata| metadata.len() > 0)
+        })
+    })
+}
+
 fn run_aggregate_batch(
     inputs: &[PathBuf],
     outputs: &Path,
@@ -877,7 +889,10 @@ fn run_aggregate_batch(
     let mut accepted: Vec<AcceptedBudgetItem> = Vec::new();
     let mut allocations =
         build_budget(&budget_request(&ids, &analyses, ceiling_bytes, &accepted)).unwrap();
-    assert!(allocations.feasible, "aggregate fixture budget should be feasible");
+    assert!(
+        allocations.feasible,
+        "aggregate fixture budget should be feasible"
+    );
     let mut applied_allocations = Vec::new();
     let mut results = Vec::new();
     for (index, analysis) in analyses.iter().enumerate() {
@@ -1040,9 +1055,7 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
         "all unchanged images are accepted under the Gmail aggregate ceiling",
         format!(
             "actual accepted bytes={} <= {}; every item stayed unchanged={}",
-            under.accepted_bytes,
-            under.ceiling_bytes,
-            under_ok
+            under.accepted_bytes, under.ceiling_bytes, under_ok
         ),
         CompressionStrategy::Precise,
         LimitScope::BatchTotal,
@@ -1189,13 +1202,8 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
     let cap_analyses = analyze_paths(&cap_inputs);
     let cap_ids = aggregate_ids(cap_inputs.len());
     let cap_ceiling = 3 * MIB;
-    let initial_cap = build_budget(&budget_request(
-        &cap_ids,
-        &cap_analyses,
-        cap_ceiling,
-        &[],
-    ))
-    .unwrap();
+    let initial_cap =
+        build_budget(&budget_request(&cap_ids, &cap_analyses, cap_ceiling, &[])).unwrap();
     let cap = run_aggregate_batch(
         &cap_inputs,
         &batch_outputs.join("source-cap"),
@@ -1258,8 +1266,7 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
         && forward.results[0]
             .as_ref()
             .is_ok_and(|result| result.output_bytes < forward.allocations[0].target_bytes)
-        && forward.allocations[1].target_bytes
-            > initial_forward.allocations[1].target_bytes;
+        && forward.allocations[1].target_bytes > initial_forward.allocations[1].target_bytes;
     cases.push(batch_case(
         "Actual-under-allocation forward redistribution",
         forward_ok,
@@ -1335,9 +1342,15 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
     let quality_large_bytes = fs::metadata(&quality_inputs[0]).unwrap().len();
     let quality_target = (quality_large_bytes.saturating_mul(20) / 100).max(80 * 1024);
     let quality_ceiling = quality_target + fs::metadata(&quality_inputs[1]).unwrap().len();
+    let quality_output_dir = batch_outputs.join("quality-floor");
+    let rejected_quality_output = aggregate_output_path(
+        &quality_output_dir,
+        "aggregate-0",
+        &analyze(quality_inputs[0].to_string_lossy().as_ref()).unwrap(),
+    );
     let quality = run_aggregate_batch(
         &quality_inputs,
-        &batch_outputs.join("quality-floor"),
+        &quality_output_dir,
         quality_ceiling,
         CompressionStrategy::Balanced,
     );
@@ -1346,16 +1359,23 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
         .iter()
         .filter_map(|result| result.as_ref().err())
         .collect::<Vec<_>>();
-    let quality_ok = quality.results.iter().filter(|result| result.is_ok()).count() == 1
+    let quality_output_absent = !rejected_quality_output.exists();
+    let quality_residue_absent = !contains_processing_residue(&quality_output_dir);
+    let quality_ok = quality.results[0].is_err()
+        && quality.results[1].is_ok()
         && quality_errors.len() == 1
-        && quality_errors[0].to_ascii_lowercase().contains("quality floor")
+        && quality_errors[0]
+            .to_ascii_lowercase()
+            .contains("quality floor")
+        && quality_output_absent
+        && quality_residue_absent
         && quality.accepted_bytes <= quality_ceiling;
     cases.push(batch_case(
         "One quality-floor failure",
         quality_ok,
         "one item fails safely at its quality floor while valid accepted bytes remain proved",
         format!(
-            "error={}; actual accepted total={}",
+            "error={}; rejectedOutputAbsent={quality_output_absent}; residueAbsent={quality_residue_absent}; actual accepted total={}",
             quality_errors.first().map_or("none", |error| error.as_str()),
             quality.accepted_bytes
         ),
@@ -1438,9 +1458,15 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
     let partial_failed_source = fs::metadata(&partial_inputs[0]).unwrap().len();
     let partial_target = (partial_failed_source.saturating_mul(20) / 100).max(80 * 1024);
     let partial_ceiling = fs::metadata(&partial_inputs[1]).unwrap().len() + partial_target;
+    let partial_output_dir = batch_outputs.join("partial");
+    let rejected_partial_output = aggregate_output_path(
+        &partial_output_dir,
+        "aggregate-0",
+        &analyze(partial_inputs[0].to_string_lossy().as_ref()).unwrap(),
+    );
     let partial = run_aggregate_batch(
         &partial_inputs,
-        &batch_outputs.join("partial"),
+        &partial_output_dir,
         partial_ceiling,
         CompressionStrategy::Balanced,
     );
@@ -1450,8 +1476,12 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
         .filter_map(|result| result.as_ref().ok())
         .map(|result| result.output_bytes)
         .sum::<u64>();
-    let partial_ok = partial.results.iter().filter(|result| result.is_ok()).count() == 1
-        && partial.results.iter().filter(|result| result.is_err()).count() == 1
+    let partial_output_absent = !rejected_partial_output.exists();
+    let partial_residue_absent = !contains_processing_residue(&partial_output_dir);
+    let partial_ok = partial.results[0].is_err()
+        && partial.results[1].is_ok()
+        && partial_output_absent
+        && partial_residue_absent
         && partial.accepted_bytes == successful_bytes
         && partial.accepted_bytes <= partial_ceiling
         && partial.accepted_bytes + partial_failed_source > partial.accepted_bytes;
@@ -1460,7 +1490,7 @@ fn run_batch_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>)
         partial_ok,
         "partial aggregate proof sums only accepted output bytes",
         format!(
-            "accepted metric={}; successful output sum={successful_bytes}; excluded failed source={partial_failed_source}",
+            "accepted metric={}; successful output sum={successful_bytes}; excluded failed source={partial_failed_source}; rejectedOutputAbsent={partial_output_absent}; residueAbsent={partial_residue_absent}",
             partial.accepted_bytes
         ),
         CompressionStrategy::Balanced,
@@ -1522,27 +1552,16 @@ fn run_aggregate_cancellation_case(fixtures: &Path, outputs: &Path) -> CaseResul
         actual_bytes: first.output_bytes,
     }];
     budget = rebalance_budget(&remaining_budget_request(
-        &ids,
-        &analyses,
-        &accepted,
-        1,
-        ceiling,
-        &budget,
+        &ids, &analyses, &accepted, 1, ceiling, &budget,
     ))
     .unwrap();
     let active_target = budget.allocations[0].target_bytes;
     let later_target = budget.allocations[1].target_bytes;
-    let active_output = aggregate_output_path(
-        &outputs.join("cancellation"),
-        &ids[1],
-        &analyses[1],
-    );
-    let later_output = aggregate_output_path(
-        &outputs.join("cancellation"),
-        &ids[2],
-        &analyses[2],
-    );
-    let mut encoding_began = false;
+    let active_output = aggregate_output_path(&outputs.join("cancellation"), &ids[1], &analyses[1]);
+    let later_output = aggregate_output_path(&outputs.join("cancellation"), &ids[2], &analyses[2]);
+    let cancellation_output_dir = outputs.join("cancellation");
+    let mut positive_encoding_progress = false;
+    let mut partial_output_seen = false;
     let cancelled = process_with_progress(
         &ProcessRequest {
             analysis: analyses[1].clone(),
@@ -1551,12 +1570,16 @@ fn run_aggregate_cancellation_case(fixtures: &Path, outputs: &Path) -> CaseResul
             strategy: CompressionStrategy::Precise,
         },
         |progress| {
-            if progress.stage.starts_with("Encoding pass") {
-                encoding_began = true;
-                false
-            } else {
-                true
+            if progress.stage == "Encoding pass 2 of 2"
+                && progress
+                    .encoded_seconds
+                    .is_some_and(|seconds| seconds > 0.0)
+            {
+                positive_encoding_progress = true;
+                partial_output_seen = contains_nonempty_working_file(&cancellation_output_dir);
+                return !partial_output_seen;
             }
+            true
         },
     );
     let error = cancelled.err();
@@ -1567,7 +1590,8 @@ fn run_aggregate_cancellation_case(fixtures: &Path, outputs: &Path) -> CaseResul
     let clean = !active_output.exists()
         && !later_output.exists()
         && !contains_processing_residue(&outputs.join("cancellation"));
-    let passed = encoding_began
+    let passed = positive_encoding_progress
+        && partial_output_seen
         && error.as_deref() == Some(PROCESS_CANCELLED)
         && sources_unchanged
         && clean
@@ -1577,7 +1601,7 @@ fn run_aggregate_cancellation_case(fixtures: &Path, outputs: &Path) -> CaseResul
         passed,
         "active video cancellation returns PROCESS_CANCELLED and later rows remain unprocessed",
         format!(
-            "encodingBegan={encoding_began}; error={}; acceptedBeforeCancel={}; laterCancelled=1; sourcesUnchanged={sources_unchanged}; clean={clean}",
+            "positiveEncodingProgress={positive_encoding_progress}; partialOutputSeen={partial_output_seen}; error={}; acceptedBeforeCancel={}; laterCancelled=1; sourcesUnchanged={sources_unchanged}; clean={clean}",
             error.as_deref().unwrap_or("none"),
             first.output_bytes
         ),
@@ -1611,13 +1635,9 @@ fn run_per_file_regression(inputs: &[PathBuf], outputs: &Path) -> CaseResult {
             process(&ProcessRequest {
                 analysis: analysis.clone(),
                 target_bytes: DISCORD_SAFE_CEILING,
-                output_path: aggregate_output_path(
-                    outputs,
-                    &format!("per-file-{index}"),
-                    analysis,
-                )
-                .to_string_lossy()
-                .to_string(),
+                output_path: aggregate_output_path(outputs, &format!("per-file-{index}"), analysis)
+                    .to_string_lossy()
+                    .to_string(),
                 strategy: CompressionStrategy::Precise,
             })
         })
@@ -1696,8 +1716,8 @@ fn batch_case_from_metrics(
     strategy: CompressionStrategy,
     metrics: BatchCaseMetrics,
 ) -> CaseResult {
-    let scope_proof = metrics.scope != LimitScope::BatchTotal
-        || metrics.accepted_bytes <= metrics.ceiling_bytes;
+    let scope_proof =
+        metrics.scope != LimitScope::BatchTotal || metrics.accepted_bytes <= metrics.ceiling_bytes;
     CaseResult {
         name: name.to_string(),
         category: "batch".to_string(),
