@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, process::ExitStatus};
 
 use image::{GenericImageView, ImageReader};
 use serde_json::Value;
@@ -102,7 +102,7 @@ fn analyze_video(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "This video could not be analyzed. FFprobe reported: {}",
-            concise_process_error(&stderr)
+            concise_process_error(&stderr, output.status)
         ));
     }
 
@@ -194,16 +194,23 @@ pub fn command_available(command: &str) -> bool {
     toolchain::available(command)
 }
 
-fn concise_process_error(stderr: &str) -> String {
-    stderr
+fn concise_process_error(stderr: &str, status: ExitStatus) -> String {
+    let detail: String = stderr
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())
-        .unwrap_or("unknown error")
+        .unwrap_or("no error details were returned")
         .trim()
         .chars()
         .take(240)
-        .collect()
+        .collect();
+    // Windows failures can be NTSTATUS values rather than FFprobe error codes.
+    // Preserve both decimal and hexadecimal forms instead of hiding empty stderr.
+    let exit = match status.code() {
+        Some(code) => format!("exit code {code}, 0x{:08X}", code as u32),
+        None => status.to_string(),
+    };
+    format!("{detail} ({exit})")
 }
 
 fn friendly_io_error(action: &str, path: &Path, error: std::io::Error) -> String {
@@ -235,5 +242,81 @@ mod tests {
         assert_eq!(normalize_rotation(89), 90);
         assert_eq!(display_dimensions(1920, 1080, 90), (1080, 1920));
         assert_eq!(display_dimensions(1920, 1080, 180), (1920, 1080));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reports_exit_status_even_when_ffprobe_returns_no_error_text() {
+        use std::os::windows::process::ExitStatusExt;
+        let detail = concise_process_error("", ExitStatus::from_raw(0xC000_013A));
+        assert!(detail.contains("no error details were returned"));
+        assert!(detail.contains("exit code -1073741510, 0xC000013A"));
+        assert!(!detail.contains("unknown error"));
+        let detail = concise_process_error("first line\ninvalid media\n", ExitStatus::from_raw(1));
+        assert_eq!(detail, "invalid media (exit code 1, 0x00000001)");
+    }
+
+    #[test]
+    fn corrupt_video_does_not_poison_concurrent_or_subsequent_valid_analysis() {
+        if !command_available("ffmpeg") || !command_available("ffprobe") {
+            eprintln!("Skipping real-media analysis isolation test: FFmpeg/FFprobe unavailable");
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let valid = directory.path().join("valid.mp4");
+        let corrupt = directory.path().join("corrupt.mp4");
+        fs::write(&corrupt, b"not a valid video").unwrap();
+        let generated = toolchain::command("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=160x90:r=10",
+                "-t",
+                "0.5",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&valid)
+            .output()
+            .unwrap();
+        assert!(generated.status.success(), "{generated:?}");
+        let valid_bytes = fs::read(&valid).unwrap();
+        let corrupt_bytes = fs::read(&corrupt).unwrap();
+        let check_valid = |analysis: MediaAnalysis| {
+            assert_eq!(analysis.path, valid.to_string_lossy());
+            assert_eq!((analysis.width, analysis.height), (160, 90));
+            assert_eq!(analysis.duration_seconds, Some(0.5));
+            assert_eq!(analysis.size_bytes, valid_bytes.len() as u64);
+        };
+
+        for _ in 0..4 {
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let bad = scope.spawn(|| {
+                    barrier.wait();
+                    analyze(corrupt.to_str().unwrap())
+                });
+                let good = scope.spawn(|| {
+                    barrier.wait();
+                    analyze(valid.to_str().unwrap())
+                });
+                assert!(bad
+                    .join()
+                    .unwrap()
+                    .unwrap_err()
+                    .contains("FFprobe reported"));
+                check_valid(good.join().unwrap().unwrap());
+            });
+            // A native picker selection is analyzed sequentially by useBatchQueue.
+            assert!(analyze(corrupt.to_str().unwrap()).is_err());
+            check_valid(analyze(valid.to_str().unwrap()).unwrap());
+        }
+        assert_eq!(fs::read(valid).unwrap(), valid_bytes);
+        assert_eq!(fs::read(corrupt).unwrap(), corrupt_bytes);
     }
 }

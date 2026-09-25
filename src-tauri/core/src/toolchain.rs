@@ -1,11 +1,21 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 pub fn command(name: &str) -> Command {
-    Command::new(resolve(name))
+    let mut command = Command::new(resolve(name));
+    command.stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Media tools are background workers, not interactive console programs.
+        // Prevent console flashes and keep console events from interrupting them.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
 }
 
 pub fn available(name: &str) -> bool {
@@ -85,5 +95,41 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let executable = directory.path().join("FitSend.exe");
         assert_eq!(resolve_near_executable("ffprobe", &executable), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn background_commands_do_not_attach_or_create_a_console() {
+        // Check the real child process, not just the requested creation flags.
+        // A console close or Ctrl+C must not interrupt the GUI's media tools.
+        if env::var_os("FITSEND_TEST_CONSOLE_CHILD").is_none() {
+            // Start a hidden console host even if cargo itself has no console.
+            let output = Command::new("powershell")
+                .env("FITSEND_TEST_CONSOLE_CHILD", "1")
+                .env("FITSEND_TEST_EXECUTABLE", env::current_exe().unwrap())
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "$ErrorActionPreference = 'Stop'; $child = Start-Process -FilePath $env:FITSEND_TEST_EXECUTABLE -ArgumentList '--exact','toolchain::tests::background_commands_do_not_attach_or_create_a_console' -WindowStyle Hidden -Wait -PassThru; exit $child.ExitCode",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "console-hosted test failed: {output:?}"
+            );
+            return;
+        }
+        let output = command("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference = 'Stop'; Add-Type -Namespace FitSendTest -Name Console -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow();'; if ([FitSendTest.Console]::GetConsoleWindow() -ne [IntPtr]::Zero) { exit 91 }",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "child had a console: {output:?}");
     }
 }
