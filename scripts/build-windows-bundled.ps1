@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 & (Join-Path $PSScriptRoot "stage-ffmpeg.ps1")
@@ -61,7 +62,7 @@ try {
     $checksumLines = $artifacts |
         Sort-Object { [System.IO.Path]::GetFileName($_) } |
         ForEach-Object {
-            $hash = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            $hash = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $([System.IO.Path]::GetFileName($_))"
         }
     $checksumPath = Join-Path $releaseDirectory "SHA256SUMS.txt"
