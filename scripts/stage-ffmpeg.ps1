@@ -51,6 +51,16 @@ $readme = Join-Path $packageRoot "README.txt"
 Copy-Item -LiteralPath $license -Destination (Join-Path $destination "LICENSE.GPLv3.txt") -Force
 Copy-Item -LiteralPath $readme -Destination (Join-Path $destination "BUILD_README.txt") -Force
 
+# Release builds verify these files and their corresponding source bundle before
+# staging. Keep the full third-party notices inside every installed/portable app.
+foreach ($name in @('THIRD_PARTY_LICENSES.txt', 'SOURCES.lock', 'TOOLCHAIN.txt', 'SHA256SUMS.txt')) {
+    $source = Join-Path $packageRoot $name
+    if (Test-Path -LiteralPath $source) {
+        $stagedName = if ($name -eq 'SHA256SUMS.txt') { 'BUILD_PACKAGE_SHA256SUMS.txt' } else { $name }
+        Copy-Item -LiteralPath $source -Destination (Join-Path $destination $stagedName) -Force
+    }
+}
+
 $ffmpegSize = [math]::Round((Get-Item -LiteralPath $ffmpeg).Length / 1MB, 1)
 $ffprobeSize = [math]::Round((Get-Item -LiteralPath $ffprobe).Length / 1MB, 1)
 $versionLine = ($versionOutput -split "`r?`n")[0]

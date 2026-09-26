@@ -1,8 +1,14 @@
 FitSend video support uses the separate FFmpeg and FFprobe command-line programs.
 
-The bundled Windows preview uses the Gyan.dev FFmpeg Essentials build. The precise version, build configuration, corresponding FFmpeg source revision, and external libraries are recorded in BUILD_README.txt beside the executables. The applicable GNU GPL v3 license is included as LICENSE.GPLv3.txt.
+The bundled Windows release uses FitSend's source-pinned FFmpeg 8.0.1-fitsend1 build. The precise source revisions are recorded in SOURCES.lock and BUILD_README.txt beside the executables. The applicable GNU GPL v3 license is included as LICENSE.GPLv3.txt; dependency copyright, license and patent notices are in THIRD_PARTY_LICENSES.txt. This FFmpeg build is GPL v3 or later.
 
-FFmpeg is a trademark of Fabrice Bellard and is an independent open-source project. FitSend is not affiliated with or endorsed by the FFmpeg project or Gyan.dev.
+FFmpeg is a trademark of Fabrice Bellard and is an independent open-source project. FitSend is not affiliated with or endorsed by FFmpeg or its dependency projects.
+
+Corresponding source
+--------------------
+Download FitSend-FFmpeg-8.0.1-fitsend1-sources.tar.gz alongside the Windows packages at https://github.com/YuLeo926/FitSend/releases/tag/v0.3.0 . It includes the exact FFmpeg, x264, libvpx, Opus, zlib and dav1d source archives used, their SHA-256 hashes, build scripts, generated configuration, toolchain versions and license notices. Rebuild instructions are in materials/recipe/README.md inside that archive. No upstream media source patches are applied.
+
+BUILD_PACKAGE_SHA256SUMS.txt records paths in the original FFmpeg build package (bin/ffmpeg.exe, bin/ffprobe.exe, LICENSE and README.txt). FitSend stages those files into this directory and renames LICENSE and README.txt to LICENSE.GPLv3.txt and BUILD_README.txt; executable bytes are unchanged.
 
 Replacing the tools
 -------------------

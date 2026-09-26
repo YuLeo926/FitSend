@@ -81,17 +81,19 @@ cargo clippy --workspace --all-targets --manifest-path src-tauri/Cargo.toml -- -
 npm run test:acceptance
 ```
 
-The 68-row real-media acceptance report preserves the original 56 strategy, media, corruption, collision, cancellation, and cleanup scenarios and adds 12 batch scenarios. Those cover image, video, and mixed aggregate totals; source caps; forward redistribution; impossible reserves; quality-floor, corrupt, partial, and cancellation behavior; and the per-file Discord regression. Reports in `output/acceptance` include structured batch scope, ceiling, allocations, accepted and attention counts, and actual accepted bytes.
+The 77-row real-media acceptance report covers strategy, media, corruption, collision, cancellation, cleanup and batch scenarios. Those include image, video, and mixed aggregate totals; source caps; forward redistribution; impossible reserves; quality-floor, corrupt, partial, and cancellation behavior; retained-original verification; and the per-file Discord regression. Reports in `output/acceptance` include structured batch scope, ceiling, allocations, accepted and attention counts, and actual accepted bytes.
 
 ## Build Windows packages
 
 ```powershell
+$env:FITSEND_FFMPEG_SOURCE_DIR = 'C:\path\to\extracted\package'
+$env:FITSEND_FFMPEG_SOURCE_ARCHIVE = 'C:\path\to\FitSend-FFmpeg-8.0.1-fitsend1-sources.tar.gz'
 npm run bundle:windows
 ```
 
-The build stages the project's configured FFmpeg distribution, rejects builds marked `--enable-nonfree`, preserves its license and exact build metadata, then creates MSI, NSIS, and portable ZIP artifacts plus `SHA256SUMS.txt`. The portable archive contains FitSend, FFmpeg, FFprobe, the FFmpeg license, the distribution notice, and revision metadata.
+First build/download the matching binary and source artifacts using the [pinned FFmpeg recipe](scripts/ffmpeg/README.md). The release build verifies package checksums and matching source provenance, rejects builds marked `--enable-nonfree`, and preserves licenses and build metadata. It creates MSI, NSIS and portable ZIP artifacts, copies the corresponding source archive, and includes all four in `SHA256SUMS.txt`. Every app package includes FFmpeg, FFprobe, the GPL license, third-party notices and revision metadata.
 
-The bundled GPL v3 Gyan.dev Essentials build is invoked as separate `ffmpeg.exe` and `ffprobe.exe` programs for H.264/AAC processing. Before publishing a download, provide the complete corresponding FFmpeg source for the exact bundled revision at the same download location and review all applicable external-library obligations. See `src-tauri/resources/ffmpeg/FITSEND-FFMPEG-NOTICE.txt`. This is a distribution checkpoint, not legal advice.
+The bundled FFmpeg 8.0.1-fitsend1 build is invoked as separate `ffmpeg.exe` and `ffprobe.exe` programs, under GPL v3 or later. Its [corresponding source bundle](https://github.com/YuLeo926/FitSend/releases/download/v0.3.0/FitSend-FFmpeg-8.0.1-fitsend1-sources.tar.gz) includes exact FFmpeg and dependency archives, checksums, configuration, license notices and rebuild scripts. Publish this bundle beside the app downloads. See `src-tauri/resources/ffmpeg/FITSEND-FFMPEG-NOTICE.txt`. These build records are not legal advice or a patent clearance opinion.
 
 FitSend 0.3.0 installers are unsigned. Windows SmartScreen or antivirus software may warn about an unknown publisher.
 

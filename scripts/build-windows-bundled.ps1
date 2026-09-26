@@ -1,5 +1,7 @@
 param(
-    [string]$CargoTargetDirectory = $env:CARGO_TARGET_DIR
+    [string]$CargoTargetDirectory = $env:CARGO_TARGET_DIR,
+    [string]$FfmpegSourceDirectory = $env:FITSEND_FFMPEG_SOURCE_DIR,
+    [string]$FfmpegSourceArchive = $env:FITSEND_FFMPEG_SOURCE_ARCHIVE
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,7 +25,11 @@ function Get-ReleaseHash {
     }
 }
 
-& (Join-Path $PSScriptRoot "stage-ffmpeg.ps1")
+if (-not $FfmpegSourceDirectory -or -not $FfmpegSourceArchive) {
+    throw 'Release builds require FITSEND_FFMPEG_SOURCE_DIR and FITSEND_FFMPEG_SOURCE_ARCHIVE from the same source-pinned build.'
+}
+& (Join-Path $PSScriptRoot "verify-ffmpeg-release.ps1") -SourceDirectory $FfmpegSourceDirectory -SourceArchive $FfmpegSourceArchive
+& (Join-Path $PSScriptRoot "stage-ffmpeg.ps1") -SourceDirectory (Join-Path $FfmpegSourceDirectory 'bin')
 
 if (-not $CargoTargetDirectory) {
     $CargoTargetDirectory = Join-Path $projectRoot "src-tauri\target"
@@ -70,7 +76,11 @@ try {
     if (Test-Path -LiteralPath $portableZip) { Remove-Item -LiteralPath $portableZip -Force }
     Compress-Archive -Path (Join-Path $portableDirectory "*") -DestinationPath $portableZip -CompressionLevel Optimal
 
-    $artifacts = @($msi, $setup, $portableZip)
+    $sourceAsset = Join-Path $releaseDirectory ([System.IO.Path]::GetFileName($FfmpegSourceArchive))
+    if ([System.IO.Path]::GetFullPath($FfmpegSourceArchive) -ine [System.IO.Path]::GetFullPath($sourceAsset)) {
+        Copy-Item -LiteralPath $FfmpegSourceArchive -Destination $sourceAsset -Force
+    }
+    $artifacts = @($msi, $setup, $portableZip, $sourceAsset)
     foreach ($artifact in $artifacts) {
         if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or (Get-Item -LiteralPath $artifact).Length -eq 0) {
             throw "Expected a non-empty release artifact: $artifact"
@@ -91,7 +101,7 @@ try {
     )
 
     Write-Output "Bundled release files:"
-    Get-Item -LiteralPath $msi,$setup,$portableZip,$checksumPath | Select-Object Name,Length
+    Get-Item -LiteralPath $msi,$setup,$portableZip,$sourceAsset,$checksumPath | Select-Object Name,Length
 } finally {
     Pop-Location
 }
