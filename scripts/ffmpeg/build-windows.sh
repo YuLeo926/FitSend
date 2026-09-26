@@ -95,6 +95,7 @@ cd "$out/src/ffmpeg"
     --enable-cross-compile --cross-prefix=x86_64-w64-mingw32- --cc="$CC" --cxx="$CXX" \
     --pkg-config=pkg-config --pkg-config-flags=--static \
     --disable-autodetect --disable-network --disable-ffplay --disable-doc --disable-debug \
+    --disable-devices --enable-indev=lavfi \
     --disable-shared --enable-static --enable-w32threads --disable-pthreads \
     --enable-gpl --enable-version3 --enable-libx264 --enable-libvpx --enable-libopus \
     --enable-libdav1d --enable-zlib --extra-version=fitsend1 \
@@ -125,7 +126,7 @@ for exe in ffmpeg ffprobe; do
     [[ -n "$imports" ]]
     while read -r dll; do
         case "$dll" in
-            kernel32.dll|msvcrt.dll|user32.dll|advapi32.dll|shell32.dll|ole32.dll|oleaut32.dll|ws2_32.dll|bcrypt.dll|secur32.dll|gdi32.dll|winmm.dll|psapi.dll) ;;
+            kernel32.dll|msvcrt.dll|user32.dll|advapi32.dll|shell32.dll|shlwapi.dll|ole32.dll|oleaut32.dll|ws2_32.dll|bcrypt.dll|secur32.dll|gdi32.dll|winmm.dll|psapi.dll) ;;
             *) echo "Unreviewed DLL import: $dll"; exit 1 ;;
         esac
     done <<< "$imports"

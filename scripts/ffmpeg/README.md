@@ -14,6 +14,9 @@ It is not a claim of byte-for-byte reproducibility or a legal opinion.
   source archive is mirrored in FitSend's existing release assets.
 - Static libraries, Windows-native threading, no network protocols, no
   automatic detection of additional host libraries, no nonfree components.
+- Capture/playback devices are disabled; the synthetic `lavfi` input used by
+  media tests remains enabled. Shell path helpers use Windows' system
+  [Shlwapi.dll](https://learn.microsoft.com/en-us/windows/win32/shell/shlwapi).
 - H.264/AAC output, VP8/VP9/Opus support, AV1 decoding, PNG handling, and
   FFmpeg's built-in codecs/filters, including the SSIM verification filter.
 - No patches to upstream source. Configure/CMake/Meson generate ordinary
