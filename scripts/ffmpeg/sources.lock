@@ -1,0 +1,7 @@
+# name|archive|sha256|url
+ffmpeg|ffmpeg.zip|2f2b33039ccb975a27d4526ffbb9e0e28acd9e6e91e7748fb33874d450ecf8e7|https://github.com/YuLeo926/FitSend/releases/download/v0.2.1/FFmpeg-8.0.1-source-894da5ca7d.zip
+x264|x264.tar.gz|d0967a1348c85dfde363bb52610403be898171493100561efa0dd05d5fd1ae50|https://code.videolan.org/videolan/x264/-/archive/0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee/x264-0480cb05fa188d37ae87e8f4fd8f1aea3711f7ee.tar.gz
+libvpx|libvpx.tar.gz|5f6519823db1cc67fba023dc5dcf33abcd3fbab65d7e3c6f1d8ff00917a8c1c6|https://codeload.github.com/webmproject/libvpx/tar.gz/d168454ecd099805c675d4a98c66f4891373302a
+opus|opus.tar.gz|65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1|https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz
+zlib|zlib.tar.gz|b9258cf6254e7f7c37f1cd61dba943a1c5ea3cff5718c789834dac359094f5f7|https://codeload.github.com/madler/zlib/tar.gz/da607da739fa6047df13e66a2af6b8bec7c2a498
+dav1d|dav1d.tar.gz|e26d41e2f496c1598f418726b871ce252ce9f18f8dbe3ad199349a42ed2cb02f|https://code.videolan.org/videolan/dav1d/-/archive/42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa/dav1d-42b2b24fb8819f1ed3643aa9cf2a62f03868e3aa.tar.gz
