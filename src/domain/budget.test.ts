@@ -39,6 +39,7 @@ describe("budget adapters", () => {
       batchItem({ id: "completed", status: "completed", result: result(600_000, "created") }),
       batchItem({ id: "no-change", status: "noChange" }),
       batchItem({ id: "failed", status: "failed" }),
+      batchItem({ id: "cancelled", status: "cancelled", result: result(123, "created") }),
       batchItem({ id: "processing", status: "processing" }),
     ];
 

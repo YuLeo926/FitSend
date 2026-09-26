@@ -46,28 +46,14 @@ where
 
     if plan.already_fits {
         report(&mut callback, 20, "Checking the original", None, 1)?;
-        let metadata = fs::metadata(&request.analysis.path)
-            .map_err(|error| format!("FitSend could not verify the source: {error}"))?;
-        if metadata.len() > request.target_bytes {
-            return Err(
-                "The source file changed after it was analyzed and no longer fits the target. Analyze it again."
-                    .to_string(),
-            );
-        }
+        let mut result = verify_original(
+            request,
+            &mut callback,
+            "The original already fits, so FitSend left it untouched.".to_string(),
+        )?;
         report(&mut callback, 100, "Original is ready", None, 1)?;
-        return Ok(ProcessResult {
-            output_path: request.analysis.path.clone(),
-            output_bytes: metadata.len(),
-            target_bytes: request.target_bytes,
-            verified: true,
-            attempts: 0,
-            width: request.analysis.width,
-            height: request.analysis.height,
-            duration_ms: elapsed_millis(started_at),
-            outcome: crate::domain::ProcessOutcome::NoChange,
-            reason: "The original already fits, so FitSend left it untouched.".to_string(),
-            quality_score: Some(1.0),
-        });
+        result.duration_ms = elapsed_millis(started_at);
+        return Ok(result);
     }
 
     let transaction = OutputTransaction::new(Path::new(&request.output_path))?;
@@ -87,6 +73,66 @@ where
     completed.output_path = published_path.to_string_lossy().to_string();
     completed.duration_ms = elapsed_millis(started_at);
     Ok(completed)
+}
+
+fn verify_original(
+    request: &ProcessRequest,
+    callback: &mut dyn FnMut(ProcessProgress) -> bool,
+    reason: String,
+) -> Result<ProcessResult, String> {
+    let measure = || -> Result<u64, String> {
+        let bytes = fs::metadata(&request.analysis.path)
+            .map_err(|error| format!("FitSend could not verify the source: {error}"))?
+            .len();
+        if bytes > request.target_bytes {
+            return Err("The source file changed after it was analyzed and no longer fits the target. Analyze it again.".to_string());
+        }
+        Ok(bytes)
+    };
+    measure()?;
+    // Reopen/decode the retained media: cached analysis is not proof of today's source.
+    let current = crate::analyzer::analyze(&request.analysis.path)?;
+    if current.kind == MediaKind::Video {
+        let mut command = toolchain::command("ffmpeg");
+        command
+            .args(["-hide_banner", "-loglevel", "error", "-xerror", "-i"])
+            .arg(&request.analysis.path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-progress",
+                "pipe:1",
+                "-nostats",
+                "-f",
+                "null",
+                "-",
+            ]);
+        run_ffmpeg_with_progress(
+            command,
+            "Verifying original video",
+            current.duration_seconds.unwrap_or(1.0),
+            94,
+            99,
+            1,
+            callback,
+        )?;
+    }
+    let output_bytes = measure()?;
+    Ok(ProcessResult {
+        output_path: request.analysis.path.clone(),
+        output_bytes,
+        target_bytes: request.target_bytes,
+        verified: true,
+        attempts: 0,
+        width: current.width,
+        height: current.height,
+        duration_ms: 0,
+        outcome: ProcessOutcome::NoChange,
+        reason,
+        quality_score: Some(1.0),
+    })
 }
 
 fn process_image(
@@ -112,6 +158,7 @@ fn process_image(
     let candidate = match decision {
         ImageDecision::Created(candidate) => candidate,
         ImageDecision::NoChange(reason) => {
+            let result = verify_original(request, callback, reason)?;
             report(
                 callback,
                 100,
@@ -119,19 +166,7 @@ fn process_image(
                 None,
                 1,
             )?;
-            return Ok(ProcessResult {
-                output_path: request.analysis.path.clone(),
-                output_bytes: request.analysis.size_bytes,
-                target_bytes: request.target_bytes,
-                verified: request.analysis.size_bytes <= request.target_bytes,
-                attempts: 0,
-                width: request.analysis.width,
-                height: request.analysis.height,
-                duration_ms: 0,
-                outcome: ProcessOutcome::NoChange,
-                reason,
-                quality_score: Some(1.0),
-            });
+            return Ok(result);
         }
     };
     report(callback, 92, "Writing image output", None, 1)?;
@@ -356,19 +391,11 @@ fn process_quality_video(
     }
 
     if source_already_fits {
-        return Ok(ProcessResult {
-            output_path: request.analysis.path.clone(),
-            output_bytes: request.analysis.size_bytes,
-            target_bytes: request.target_bytes,
-            verified: true,
-            attempts: 0,
-            width: request.analysis.width,
-            height: request.analysis.height,
-            duration_ms: 0,
-            outcome: ProcessOutcome::NoChange,
-            reason: "No worthwhile smaller video passed the selected quality check.".to_string(),
-            quality_score: Some(1.0),
-        });
+        return verify_original(
+            request,
+            callback,
+            "No worthwhile smaller video passed the selected quality check.".to_string(),
+        );
     }
     Err(
         "FitSend cannot meet this limit without crossing the selected video quality floor."

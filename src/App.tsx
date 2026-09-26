@@ -74,6 +74,7 @@ function App() {
   const [strategy, setStrategy] = useState<CompressionStrategy>("balanced");
   const [dragActive, setDragActive] = useState(false);
   const [pickerError, setPickerError] = useState<string | null>(null);
+  const [sourceError, setSourceError] = useState<string | null>(null);
 
   const saved = useSavedPlans();
   const customBytes = useMemo(() => bytesFromCustomLimit(customValue, customUnit), [customUnit, customValue]);
@@ -145,8 +146,9 @@ function App() {
     if (!activeRule.builtIn || !activeRule.sourceUrl || !officialSourceUrls.has(activeRule.sourceUrl)) return;
     try {
       await openUrl(activeRule.sourceUrl);
+      setSourceError(null);
     } catch (reason) {
-      setPickerError(`FitSend could not open the official source: ${String(reason)}`);
+      setSourceError(`FitSend could not open the official source: ${String(reason)}`);
     }
   }, [activeRule.builtIn, activeRule.sourceUrl]);
 
@@ -316,6 +318,7 @@ function App() {
             onChange={handleRuleChange}
             onOpenCustom={openCustomEditor}
           />
+          {saved.error && activeRule.family !== "custom" && activeRule.family !== "saved" ? <p role="alert">{saved.error}</p> : null}
 
           {activeRule.family === "custom" || activeRule.family === "saved" ? (
             <CustomPlanEditor
@@ -331,7 +334,9 @@ function App() {
               onUnitChange={updateCustomUnit}
               onScopeChange={updateCustomScope}
               onNameChange={(name) => {
+                if (configurationDisabled) return;
                 saved.clearError();
+                setRuleId("custom");
                 setCustomName(name);
               }}
               onSave={() => { void saved.save(customName, customScope, customBytes); }}
@@ -351,6 +356,7 @@ function App() {
             <div><span>Working ceiling</span><strong>{validTarget ? formatBytes(targetBytes) : "—"}</strong></div>
             <div><span>Published context</span><strong>{activeRule.publishedLimitLabel}</strong></div>
           </div>
+          <p className="rule-note">{activeRule.ruleNote}</p>
           <div className="rule-source">
             <div>
               <span className="section-label">Rule source</span>
@@ -363,6 +369,7 @@ function App() {
               </button>
             ) : null}
           </div>
+          {sourceError ? <p role="alert">{sourceError}</p> : null}
           <div className="local-promise"><HardDrive size={17} /><span><strong>Nothing is uploaded.</strong> Originals stay untouched.</span></div>
         </aside>
       </section>

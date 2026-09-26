@@ -9,7 +9,7 @@ type Props = {
 };
 
 export function BatchSummary({ totals, proof, destination }: Props) {
-  const title = proof.tone === "success"
+  const title = proof.acceptedFiles === 0 ? `No files accepted for ${destination}` : proof.tone === "success"
     ? `${proof.acceptedFiles} ${proof.acceptedFiles === 1 ? "file" : "files"} ready for ${destination}`
     : proof.tone === "partial"
       ? `${proof.acceptedFiles} accepted ${proof.acceptedFiles === 1 ? "file" : "files"} for ${destination}`
@@ -20,7 +20,7 @@ export function BatchSummary({ totals, proof, destination }: Props) {
         {proof.tone === "invalid" ? <CircleAlert size={26} /> : <CheckCircle2 size={26} />}
       </span>
       <div>
-        <span className="section-label">{proof.tone === "invalid" ? "Verification issue" : "Measured and verified"}</span>
+        <span className="section-label">{proof.acceptedFiles === 0 ? "No accepted result" : proof.tone === "invalid" ? "Verification issue" : "Measured and verified"}</span>
         <h2>{title}</h2>
         <p className={`summary-proof ${proof.tone === "invalid" ? "proof-invalid" : ""}`.trim()}>{proof.headline}. {proof.detail}</p>
         <div className="summary-metrics">

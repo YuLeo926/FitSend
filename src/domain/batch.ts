@@ -152,7 +152,7 @@ export function batchProof(items: BatchItem[], rule: DestinationRule): BatchProo
   const attentionFiles = items.length - acceptedFiles;
   const ceiling = formatBytes(rule.maxBytes);
   const attention = attentionClause(attentionFiles);
-  const headline = rule.scope === "perFile"
+  const headline = acceptedFiles === 0 ? `No files accepted${attention}` : rule.scope === "perFile"
     ? basis.valid
       ? `${acceptedFileSubject(acceptedFiles)} ${acceptedFiles === 1 ? "is" : "are each"} under ${ceiling}${attention}`
       : `${acceptedFileSubject(acceptedFiles)} ${acceptedFiles === 1 ? "could not be verified" : "could not all be verified"} under ${ceiling}${attention}`
@@ -160,7 +160,9 @@ export function batchProof(items: BatchItem[], rule: DestinationRule): BatchProo
       ? `${acceptedFileSubject(acceptedFiles)} total ${formatBytes(basis.acceptedBytes)} — verified under ${ceiling}${attention}`
       : `${acceptedFileSubject(acceptedFiles)} total ${formatBytes(basis.acceptedBytes)} — not verified under ${ceiling}${attention}`;
   const tone = !basis.valid ? "invalid" : basis.allSelectedAccepted ? "success" : "partial";
-  const detail = tone === "success"
+  const detail = acceptedFiles === 0
+    ? "No accepted result is available to verify. Review failed files or retry cancelled files. Originals remain untouched."
+    : tone === "success"
     ? "All selected files are covered by this proof. Originals remain untouched."
     : tone === "partial"
       ? "Only the accepted files are covered by this proof. Files needing attention are not included."
@@ -212,6 +214,7 @@ export function batchBadgeState(
 ): BatchBadgeState {
   if (!validTarget) return { text: "Check limit", tone: "warning" };
   if (!allTerminal) return { text: `${readyCount} to fit`, tone: "good" };
+  if (proof.acceptedFiles === 0) return { text: "No files accepted", tone: "warning" };
   if (proof.tone === "success") return { text: `${proof.acceptedFiles} verified`, tone: "good" };
   if (proof.tone === "partial") return { text: `${proof.acceptedFiles} accepted`, tone: "partial" };
   return { text: "Verification failed", tone: "invalid" };

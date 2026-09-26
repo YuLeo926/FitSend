@@ -33,15 +33,30 @@ describe("saved send plans", () => {
     expect(parseSavedPlans(raw)).toEqual(plans.slice(0, 20));
   });
 
+  it("isolates duplicate UUIDs and malformed timestamps without dropping valid siblings", () => {
+    const first = createSavedPlan("One", "perFile", 10000, now, uuid(1));
+    const sibling = createSavedPlan("Two", "perFile", 10000, now, uuid(2));
+    const raw = JSON.stringify({ schemaVersion: 1, plans: [
+      { ...first, createdAt: "2026-02-30T12:00:00Z" }, first,
+      { ...first, name: "Duplicate UUID" },
+      { ...sibling, updatedAt: "not a timestamp" }, sibling,
+    ] });
+    expect(parseSavedPlans(raw)).toEqual([first, sibling]);
+  });
+
   it("requires explicit replacement for case-insensitive duplicate names", () => {
     const original = createSavedPlan("Client portal", "perFile", 2_000_000, now, uuid(1));
-    const candidate = createSavedPlan(" client PORTAL ", "batchTotal", 3_000_000, now, uuid(2));
+    const candidate = createSavedPlan(" client PORTAL ", "batchTotal", 3_000_000, "2026-09-01T12:00:00Z", uuid(2));
     expect(upsertSavedPlan([original], candidate, false).error).toBe("A saved plan with this name already exists.");
     const replaced = upsertSavedPlan([original], candidate, true);
     expect(replaced.error).toBeNull();
     expect(replaced.plans).toHaveLength(1);
     expect(replaced.plans[0].id).toBe(original.id);
     expect(replaced.plans[0].scope).toBe("batchTotal");
+    expect(replaced.plans[0].createdAt).toBe(now);
+    expect(replaced.plans[0].updatedAt).toBe(candidate.updatedAt);
+    expect(original.scope).toBe("perFile");
+    expect(original.updatedAt).toBe(now);
   });
 
   it("does not silently evict the twenty-first plan", () => {

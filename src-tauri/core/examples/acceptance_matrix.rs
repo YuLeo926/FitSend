@@ -86,6 +86,7 @@ fn main() {
     run_strategy_matrix(&fixtures, &outputs, &mut cases);
     run_failure_cases(&fixtures, &outputs, &mut cases);
     run_batch_cases(&fixtures, &outputs, &mut cases);
+    run_fitting_original_cases(&fixtures, &outputs, &mut cases);
 
     let passed = cases.iter().filter(|case| case.passed).count();
     let report = AcceptanceReport {
@@ -109,6 +110,75 @@ fn main() {
     );
     if report.failed > 0 {
         std::process::exit(1);
+    }
+}
+
+fn run_fitting_original_cases(fixtures: &Path, outputs: &Path, cases: &mut Vec<CaseResult>) {
+    let tiny = fixtures.join("review-tiny-unpadded.png");
+    image::RgbaImage::from_pixel(16, 16, Rgba([20, 40, 80, 180]))
+        .save(&tiny)
+        .unwrap();
+    assert!(fs::metadata(&tiny).unwrap().len() < 8192);
+    let small = fixtures.join("review-small-unpadded.png");
+    // Pick an actual encoded image between the planner's former 8 and 12 KiB floors.
+    for size in 40..80 {
+        generate_image(&small, size, size, true, 31).unwrap();
+        if (8192..12288).contains(&fs::metadata(&small).unwrap().len()) {
+            break;
+        }
+    }
+    assert!((8192..12288).contains(&fs::metadata(&small).unwrap().len()));
+    let low = fixtures.join("review-low-bitrate.mp4");
+    let ffmpeg = std::env::var_os("FITSEND_FFMPEG_PATH").unwrap_or_else(|| "ffmpeg".into());
+    let status = Command::new(ffmpeg)
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:size=64x64:rate=10:duration=60",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&low)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let low_analysis = analyze(low.to_str().unwrap()).unwrap();
+    assert!(low_analysis.size_bytes >= 8192);
+    assert!((low_analysis.size_bytes as f64 * 8.0 / 60.0 / 1000.0) < 180.0);
+    for (label, input) in [
+        ("tiny-unpadded-image", tiny),
+        ("small-unpadded-image", small),
+        ("low-bitrate-video", low),
+    ] {
+        let modified = fs::metadata(&input).unwrap().modified().unwrap();
+        for strategy in [
+            CompressionStrategy::Precise,
+            CompressionStrategy::Balanced,
+            CompressionStrategy::Smallest,
+        ] {
+            let name = format!("review-{label}-{}", strategy_slug(strategy));
+            let result = run_aggregate_batch(
+                std::slice::from_ref(&input),
+                &outputs.join(&name),
+                24 * 1024 * 1024,
+                strategy,
+            );
+            let passed = result.results.iter().all(|entry| {
+                entry.as_ref().is_ok_and(|value| {
+                    value.verified
+                        && value.output_bytes == fs::metadata(&value.output_path).unwrap().len()
+                        && value.output_bytes <= result.allocations[0].target_bytes
+                })
+            }) && fs::metadata(&input).unwrap().modified().unwrap() == modified;
+            cases.push(batch_case(&name, passed, "source-capped allocation builds a feasible plan and yields measured valid media without touching the original",
+                format!("results={:?}; sourceModificationTimeUnchanged=true", result.results), strategy, LimitScope::BatchTotal, &result, 0));
+        }
     }
 }
 
@@ -907,13 +977,23 @@ fn run_aggregate_batch(
             id: id.clone(),
             target_bytes: target,
         });
-        let result = process(&ProcessRequest {
-            output_path: aggregate_output_path(outputs, id, analysis)
-                .to_string_lossy()
-                .to_string(),
+        let result = build(&PlanRequest {
             analysis: analysis.clone(),
             target_bytes: target,
             strategy,
+        })
+        .and_then(|plan| {
+            if !plan.feasible {
+                return Err(plan.warnings.join(" "));
+            }
+            process(&ProcessRequest {
+                output_path: aggregate_output_path(outputs, id, analysis)
+                    .to_string_lossy()
+                    .to_string(),
+                analysis: analysis.clone(),
+                target_bytes: target,
+                strategy,
+            })
         });
         if let Ok(ref completed) = result {
             assert!(

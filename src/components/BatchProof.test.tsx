@@ -7,6 +7,22 @@ import { BatchSummary } from "./BatchSummary";
 import { FileQueue } from "./FileQueue";
 
 describe("scope-correct batch proof presentation", () => {
+  it("does not imply a limit violation or successful proof when all files failed or were cancelled", () => {
+    for (const status of ["failed", "cancelled"] as const) {
+      for (const id of ["discord-safe", "gmail-personal"]) {
+        const items = [batchItem({ id: "none", status })];
+        const rule = ruleById(id);
+        const proof = batchProof(items, rule);
+        expect(proof.valid).toBe(false);
+        const html = renderToStaticMarkup(<BatchSummary totals={batchTotals(items, rule)} proof={proof} destination="destination" />);
+        expect(html).toContain("No files accepted");
+        expect(html).toContain("No accepted result is available to verify");
+        expect(html).not.toContain("does not satisfy");
+        expect(html).not.toContain("Measured and verified");
+        expect(html).not.toContain("Verification failed");
+      }
+    }
+  });
   it("renders a partial receipt without claiming the whole selection is ready", () => {
     const items = [completedItem("accepted", 9_000_000), failedItem("failed", 2_000_000)];
     const rule = ruleById("gmail-personal");

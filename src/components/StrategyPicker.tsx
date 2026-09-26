@@ -1,6 +1,7 @@
 import { Check, Gauge, Scale, Sparkles } from "lucide-react";
 import { strategies } from "../domain/strategies";
 import type { CompressionStrategy } from "../domain/types";
+import { handleRadioArrowNavigation } from "./radioNavigation";
 
 type Props = {
   value: CompressionStrategy;
@@ -31,6 +32,8 @@ export function StrategyPicker({ value, disabled, onChange }: Props) {
               type="button"
               role="radio"
               aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
+              onKeyDown={handleRadioArrowNavigation}
               disabled={disabled}
               key={strategy.id}
               onClick={() => onChange(strategy.id)}

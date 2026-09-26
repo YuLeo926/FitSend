@@ -9,11 +9,18 @@ import {
 } from "../domain/savedPlans";
 import type { LimitScope, SavedPlanMutation, SavedPlanRecord } from "../domain/types";
 
+export function loadSavedPlans(): { plans: SavedPlanRecord[]; error: string | null } {
+  try {
+    return { plans: parseSavedPlans(window.localStorage.getItem(SAVED_PLANS_KEY)), error: null };
+  } catch {
+    return { plans: [], error: "Saved plan storage is unavailable on this computer. Custom limits still work, but plans may not be saved." };
+  }
+}
+
 export function useSavedPlans() {
-  const [plans, setPlans] = useState<SavedPlanRecord[]>(() =>
-    parseSavedPlans(window.localStorage.getItem(SAVED_PLANS_KEY)),
-  );
-  const [error, setError] = useState<string | null>(null);
+  const [initial] = useState(loadSavedPlans);
+  const [plans, setPlans] = useState<SavedPlanRecord[]>(initial.plans);
+  const [error, setError] = useState<string | null>(initial.error);
 
   const commit = useCallback((mutation: SavedPlanMutation) => {
     if (mutation.error) {
@@ -43,7 +50,7 @@ export function useSavedPlans() {
     commit({ plans: deleteSavedPlan(plans, id), error: null }),
   [commit, plans]);
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => setError(initial.error), [initial.error]);
 
   return { plans, error, save, replace, remove, clearError };
 }

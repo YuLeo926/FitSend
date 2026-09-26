@@ -7,33 +7,46 @@ pub fn build(request: &PlanRequest) -> Result<CompressionPlan, String> {
     let analysis = &request.analysis;
     let target_bytes = request.target_bytes;
 
-    if target_bytes < MIN_TARGET_BYTES {
+    let source_fits = analysis.size_bytes <= target_bytes;
+    if target_bytes < MIN_TARGET_BYTES && !source_fits {
         return Err("Choose a target of at least 8 KB.".to_string());
     }
 
-    if analysis.size_bytes <= target_bytes && request.strategy == CompressionStrategy::Precise {
-        return Ok(CompressionPlan {
-            strategy: request.strategy,
-            already_fits: true,
-            feasible: true,
-            target_bytes,
-            estimated_bytes: analysis.size_bytes,
-            operation: "Verified copy".to_string(),
-            summary: "The original already fits. FitSend will create a verified copy without recompressing it."
-                .to_string(),
-            quality_label: "Original".to_string(),
-            warnings: vec![],
-            output_extension: analysis.extension.clone(),
-            video_bitrate_kbps: None,
-            audio_bitrate_kbps: None,
-            width: analysis.width,
-            height: analysis.height,
-        });
+    if source_fits
+        && (request.strategy == CompressionStrategy::Precise || target_bytes < MIN_TARGET_BYTES)
+    {
+        return Ok(original_plan(request));
     }
 
-    match analysis.kind {
+    let plan = match analysis.kind {
         MediaKind::Image => image_plan(analysis, target_bytes, request.strategy),
         MediaKind::Video => video_plan(analysis, target_bytes, request.strategy),
+    }?;
+    // Encoding floors constrain new outputs, not a valid original already inside its allocation.
+    if source_fits && !plan.feasible {
+        return Ok(original_plan(request));
+    }
+    Ok(plan)
+}
+
+fn original_plan(request: &PlanRequest) -> CompressionPlan {
+    let analysis = &request.analysis;
+    CompressionPlan {
+        strategy: request.strategy,
+        already_fits: true,
+        feasible: true,
+        target_bytes: request.target_bytes,
+        estimated_bytes: analysis.size_bytes,
+        operation: "Verify original".to_string(),
+        summary: "The original already fits. FitSend will verify it and leave it untouched."
+            .to_string(),
+        quality_label: "Original".to_string(),
+        warnings: vec![],
+        output_extension: analysis.extension.clone(),
+        video_bitrate_kbps: None,
+        audio_bitrate_kbps: None,
+        width: analysis.width,
+        height: analysis.height,
     }
 }
 
