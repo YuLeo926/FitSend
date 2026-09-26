@@ -4,6 +4,21 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-FileSha256 {
+    param([string]$Path)
+    # npm/Tauri-launched Windows PowerShell can lose module command discovery.
+    # Use the same .NET SHA-256 implementation without relying on Get-FileHash.
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $packageRoot = (Resolve-Path -LiteralPath $SourceDirectory).Path
 $archivePath = (Resolve-Path -LiteralPath $SourceArchive).Path
 $expectedName = 'FitSend-FFmpeg-8.0.1-fitsend1-sources.tar.gz'
@@ -22,7 +37,7 @@ foreach ($line in $manifest) {
         throw "Unexpected or duplicate FFmpeg package entry: $relativePath"
     }
     $seen[$relativePath] = $true
-    $actual = (Get-FileHash -LiteralPath (Join-Path $packageRoot $relativePath) -Algorithm SHA256).Hash
+    $actual = Get-FileSha256 (Join-Path $packageRoot $relativePath)
     if ($actual -ine $hash) { throw "FFmpeg package checksum mismatch: $relativePath" }
 }
 if ($seen.Count -ne $expectedFiles.Count) { throw 'Incomplete FFmpeg package checksum manifest.' }
