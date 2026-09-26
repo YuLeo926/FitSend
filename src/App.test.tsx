@@ -5,6 +5,7 @@ import { CustomPlanEditor } from "./components/CustomPlanEditor";
 import { DestinationPicker } from "./components/DestinationPicker";
 import { createSavedPlan, serializeSavedPlans } from "./domain/savedPlans";
 import { ruleById } from "./domain/profiles";
+import { useSavedPlans } from "./hooks/useSavedPlans";
 
 // A tiny hook/event harness exercises the actual App callbacks without adding a DOM dependency.
 const harness = vi.hoisted(() => ({ slots: [] as unknown[], cursor: 0, openUrl: vi.fn() }));
@@ -66,18 +67,54 @@ describe("send-plan review regressions", () => {
     vi.stubGlobal("window", failure === "getter" ? Object.defineProperty({}, "localStorage", { get: unavailable }) : { localStorage: { getItem: unavailable, setItem: unavailable } });
     let tree = render();
     expect(component(tree, DestinationPicker).savedRules).toEqual([]);
-    expect(text(tree)).toContain("storage is unavailable");
+    expect(text(tree)).toContain("could not be read");
     component(tree, DestinationPicker).onOpenCustom();
     tree = render();
     const editor = component(tree, CustomPlanEditor);
     expect(editor.disabled).toBe(false);
-    expect(editor.savedPlanError).toContain("storage is unavailable");
+    expect(editor.savedPlanError).toContain("could not be read");
     editor.onNameChange("Unsaved");
     tree = render();
     component(tree, CustomPlanEditor).onSave();
     tree = render();
     expect(component(tree, DestinationPicker).savedRules).toEqual([]);
-    expect(component(tree, CustomPlanEditor).savedPlanError).toContain("could not save");
+    expect(component(tree, CustomPlanEditor).savedPlanError).toContain("restart");
+  });
+
+  it("never overwrites unread plans after a transient initial read failure, then recovers on remount", () => {
+    const original = serializeSavedPlans([saved]);
+    let stored = original;
+    let failRead = true;
+    const setItem = vi.fn((_key: string, value: string) => { stored = value; });
+    vi.stubGlobal("window", { localStorage: {
+      getItem: () => {
+        if (failRead) throw new Error("transient read failure");
+        return stored;
+      },
+      setItem,
+    } });
+    const hook = () => { harness.cursor = 0; return useSavedPlans(); };
+    let plans = hook();
+    expect(plans.plans).toEqual([]);
+    expect(plans.error).toContain("restart");
+    failRead = false;
+    plans.clearError();
+    plans = hook();
+    expect(plans.save("New plan", "perFile", 20000)).toBe(false);
+    expect(plans.replace("Original plan", "perFile", 30000)).toBe(false);
+    expect(plans.remove(saved.id)).toBe(false);
+    expect(setItem).not.toHaveBeenCalled();
+    expect(stored).toBe(original);
+    expect(hook().plans).toEqual([]);
+    expect(hook().error).toContain("restart");
+
+    harness.slots = [];
+    plans = hook();
+    expect(plans.plans).toEqual([saved]);
+    expect(plans.error).toBeNull();
+    expect(plans.save("New plan", "perFile", 20000)).toBe(true);
+    expect(setItem).toHaveBeenCalledTimes(1);
+    expect(hook().plans.map((plan) => plan.name)).toEqual(["Original plan", "New plan"]);
   });
 
   it("successful source retry clears only the source error, leaving picker errors intact", async () => {

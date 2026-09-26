@@ -18,6 +18,15 @@ pub fn build(request: &PlanRequest) -> Result<CompressionPlan, String> {
         return Ok(original_plan(request));
     }
 
+    // A durationless video cannot be assigned an encoding bitrate, but a fitting original
+    // can still be independently verified without creating a new output.
+    if source_fits
+        && matches!(analysis.kind, MediaKind::Video)
+        && usable_video_duration(analysis).is_none()
+    {
+        return Ok(original_plan(request));
+    }
+
     let plan = match analysis.kind {
         MediaKind::Image => image_plan(analysis, target_bytes, request.strategy),
         MediaKind::Video => video_plan(analysis, target_bytes, request.strategy),
@@ -114,9 +123,7 @@ fn video_plan(
     target_bytes: u64,
     strategy: CompressionStrategy,
 ) -> Result<CompressionPlan, String> {
-    let duration = analysis
-        .duration_seconds
-        .filter(|value| *value > 0.0)
+    let duration = usable_video_duration(analysis)
         .ok_or_else(|| "FitSend could not determine this video's duration.".to_string())?;
     let audio_kbps = if analysis.has_audio {
         if duration > 300.0 {
@@ -184,6 +191,12 @@ fn video_plan(
         width,
         height,
     })
+}
+
+fn usable_video_duration(analysis: &MediaAnalysis) -> Option<f64> {
+    analysis
+        .duration_seconds
+        .filter(|value| value.is_finite() && *value > 0.0)
 }
 
 fn scaled_even_dimensions(width: u32, height: u32, max_width: u32) -> (u32, u32) {
@@ -264,6 +277,34 @@ mod tests {
         })
         .unwrap();
         assert!(!plan.already_fits);
+    }
+
+    #[test]
+    fn unusable_duration_only_keeps_fitting_originals() {
+        for duration_seconds in [None, Some(0.0), Some(f64::NAN), Some(f64::INFINITY)] {
+            for strategy in [
+                CompressionStrategy::Precise,
+                CompressionStrategy::Balanced,
+                CompressionStrategy::Smallest,
+            ] {
+                let mut analysis = video_analysis();
+                analysis.size_bytes = 20 * 1024;
+                analysis.duration_seconds = duration_seconds;
+                let fitting = build(&PlanRequest {
+                    analysis: analysis.clone(),
+                    target_bytes: analysis.size_bytes,
+                    strategy,
+                })
+                .unwrap();
+                assert!(fitting.already_fits);
+                assert!(build(&PlanRequest {
+                    analysis: analysis.clone(),
+                    target_bytes: analysis.size_bytes - 1,
+                    strategy,
+                })
+                .is_err());
+            }
+        }
     }
 
     #[test]

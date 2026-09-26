@@ -13,7 +13,7 @@ export function loadSavedPlans(): { plans: SavedPlanRecord[]; error: string | nu
   try {
     return { plans: parseSavedPlans(window.localStorage.getItem(SAVED_PLANS_KEY)), error: null };
   } catch {
-    return { plans: [], error: "Saved plan storage is unavailable on this computer. Custom limits still work, but plans may not be saved." };
+    return { plans: [], error: "Saved plan storage could not be read. Custom limits still work, but saved plans cannot be changed until you restart FitSend to retry loading them." };
   }
 }
 
@@ -21,8 +21,13 @@ export function useSavedPlans() {
   const [initial] = useState(loadSavedPlans);
   const [plans, setPlans] = useState<SavedPlanRecord[]>(initial.plans);
   const [error, setError] = useState<string | null>(initial.error);
+  const initialLoadUnread = initial.error !== null;
 
   const commit = useCallback((mutation: SavedPlanMutation) => {
+    if (initialLoadUnread) {
+      setError(initial.error);
+      return false;
+    }
     if (mutation.error) {
       setError(mutation.error);
       return false;
@@ -36,7 +41,7 @@ export function useSavedPlans() {
       setError("The plan is active, but FitSend could not save it on this computer.");
       return false;
     }
-  }, []);
+  }, [initial.error, initialLoadUnread]);
 
   const save = useCallback((name: string, scope: LimitScope, maxBytes: number) =>
     commit(upsertSavedPlan(plans, createSavedPlan(name, scope, maxBytes, new Date().toISOString(), crypto.randomUUID()), false)),

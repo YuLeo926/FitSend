@@ -39,6 +39,126 @@ fn fixture(path: &Path, video: bool) {
     }
 }
 
+fn durationless_video_fixture(path: &Path) {
+    let tool = std::env::var_os("FITSEND_FFMPEG_PATH").unwrap_or_else(|| "ffmpeg".into());
+    let status = std::process::Command::new(tool)
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x240:rate=15:duration=2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-live",
+            "1",
+        ])
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn durationless_fitting_video_uses_verified_original_for_every_strategy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("live.mkv");
+    durationless_video_fixture(&path);
+    let original = fs::read(&path).unwrap();
+    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    let analysis = analyze(path.to_str().unwrap()).unwrap();
+    assert!(analysis.size_bytes > 8192);
+    assert_eq!(analysis.duration_seconds, None);
+    let budget = build_budget(&BatchBudgetRequest {
+        scope: LimitScope::BatchTotal,
+        ceiling_bytes: 24 * 1024 * 1024,
+        items: vec![BudgetItemRequest {
+            id: "live".into(),
+            source_bytes: analysis.size_bytes,
+            minimum_allocation_bytes: None,
+        }],
+        accepted: vec![],
+    })
+    .unwrap();
+    let target_bytes = budget.allocations[0].target_bytes;
+    assert_eq!(target_bytes, analysis.size_bytes);
+
+    for strategy in STRATEGIES {
+        let plan = build(&PlanRequest {
+            analysis: analysis.clone(),
+            target_bytes,
+            strategy,
+        })
+        .unwrap();
+        assert!(plan.feasible);
+        assert!(plan.already_fits);
+        let output = dir.path().join("must-not-exist.mp4");
+        let request = ProcessRequest {
+            analysis: analysis.clone(),
+            target_bytes,
+            strategy,
+            output_path: output.to_string_lossy().into(),
+        };
+        let result = process(&request).unwrap();
+        assert_eq!(result.outcome, ProcessOutcome::NoChange);
+        assert_eq!(result.output_bytes, original.len() as u64);
+        assert!(result.verified);
+        assert!(!output.exists());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        assert_eq!(
+            process_with_progress(&request, |progress| progress.percent < 20).unwrap_err(),
+            PROCESS_CANCELLED
+        );
+        assert!(build(&PlanRequest {
+            analysis: analysis.clone(),
+            target_bytes: analysis.size_bytes - 1,
+            strategy,
+        })
+        .is_err());
+        assert!(process(&ProcessRequest {
+            target_bytes: analysis.size_bytes - 1,
+            ..request.clone()
+        })
+        .is_err());
+    }
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"grown")
+        .unwrap();
+    for strategy in STRATEGIES {
+        let output = dir.path().join("must-not-exist.mp4");
+        assert!(process(&ProcessRequest {
+            analysis: analysis.clone(),
+            target_bytes,
+            strategy,
+            output_path: output.to_string_lossy().into(),
+        })
+        .is_err());
+        assert!(!output.exists());
+    }
+
+    fs::write(&path, b"corrupted replacement").unwrap();
+    for strategy in STRATEGIES {
+        let output = dir.path().join("must-not-exist.mp4");
+        assert!(process(&ProcessRequest {
+            analysis: analysis.clone(),
+            target_bytes,
+            strategy,
+            output_path: output.to_string_lossy().into(),
+        })
+        .is_err());
+        assert!(!output.exists());
+    }
+}
+
 #[test]
 fn tiny_sources_allocate_plan_and_process_for_every_strategy() {
     let dir = tempfile::tempdir().unwrap();
